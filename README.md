@@ -14,6 +14,10 @@ Part of [Val’s Apps](https://va3fod.github.io/).
 |---|---|---|---|
 | ![Cat theme on a phone](screenshots/readme_phone_cat.png) | ![Aviation theme on a phone](screenshots/readme_phone_air.png) | ![Win screen with stamps](screenshots/phone_win.png) | ![High-score table](screenshots/phone_highscores.png) |
 
+| Stuck, cats | Stuck, aviation |
+|---|---|
+| ![Game over: cat nap time](screenshots/phone_stuck_cat.png) | ![Game over: holding pattern](screenshots/phone_stuck_air.png) |
+
 ## What makes it different
 
 - **Two full themes.** Cat-illustrated cards (the King is a big tomcat, the Jack is a kitten with yarn) or pilots and aircraft. Each theme has its own table, card backs, sounds and win celebration: cats chasing cards across the table, or a plane flyby with card contrails.
@@ -21,7 +25,8 @@ Part of [Val’s Apps](https://va3fod.github.io/).
 - **Winnable deals.** With this on, every deal has already been solved by the built-in solver.
 - **Daily challenge.** The same winnable deal for everyone each day.
 - **Smart hint** that looks ahead with the solver, **unlimited undo and redo**, and **auto-finish** once every card is face up.
-- **Draw 1 or Draw 3**, with classic scoring and a time bonus.
+- **Draw 1 or Draw 3**, with classic scoring and a capped time bonus: 1000 × 240 ÷ (seconds + 240), so at most 1000 points. A fast win helps, but good play counts for more. Only wins go on the high-score table.
+- **Stuck = game over.** If no move can ever put another card home or turn one over, even by cycling the stock, the clock stops and a themed Game over screen appears (*Cat nap time* or *Holding pattern*). Undo your last move to keep playing, or replay the deal or start a new one; those two count as a loss.
 - **Players and high scores.** Several people can share a device. Each player has their own stats, and the top 10 scores for Draw 1 and Draw 3 are kept with name, time, moves and date.
 - **Stamps** to collect, like *Cat Nap* or *Barrel Roll*, plus win streaks and best times.
 - **Easy to use for everyone:** a left-handed layout, large cards and colour-blind-friendly suit colours.

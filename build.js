@@ -1,6 +1,6 @@
 /* Build the single-file app: node build.js  → Purrfect_Landing_Solitaire_V1.0.html + index.html */
 const fs = require('fs'), path = require('path');
-const APP = { NAME: 'Purrfect Landing Solitaire', TAGLINE: 'Klondike solitaire with cats and airplanes', VERSION: '1.0', STORE_KEY: 'purrfectLandingV1' };
+const APP = { NAME: 'Purrfect Landing Solitaire', TAGLINE: 'Klondike solitaire with cats and airplanes', VERSION: '1.1', STORE_KEY: 'purrfectLandingV1' };
 APP.SLUG = APP.NAME.replace(/[^A-Za-z0-9]+/g, '-');
 APP.FILE = APP.SLUG.replace(/-/g, '_') + '_V' + APP.VERSION + '.html';
 const d = __dirname, src = f => fs.readFileSync(path.join(d, 'src', f), 'utf8');

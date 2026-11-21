@@ -208,7 +208,15 @@
       <li><b>Players and high scores</b>: each player on this device has their own stats. The top 10 scores for Draw 1 and Draw 3 are kept with name, time, moves and date. Tap 👤 to switch players.</li>
       <li>Switch between the <b>Cat</b> and <b>Aviation</b> themes anytime. Left-handed, large-card and colour-blind options are in Settings.</li>
     </ul>
-    <p class="small">Scoring: +10 to a foundation, +5 from the waste to the table, +5 for flipping a card, −15 from a foundation back to the table, and a time bonus when you win.</p>
+    <h4>Stuck = game over</h4>
+    <p>If no move can ever put another card on a foundation or turn over a face-down card, even after cycling through the stock, you’re stuck. The clock stops and a <b>Game over</b> screen appears. You can <b>Undo</b> your last move and keep playing (the clock starts again), <b>Replay</b> the same deal, or start a <b>New game</b>. Replay or New game counts as a loss and ends your win streak. Undo doesn’t.</p>
+    <h4>Scoring</h4>
+    <ul>
+      <li>+10 for each card moved to a foundation, +5 from the waste to the table, +5 for turning over a card, −15 for taking a card back off a foundation.</li>
+      <li>Recycling the stock: free the first time in Draw 1 (the first three times in Draw 3), then −100 (Draw 1) or −20 (Draw 3).</li>
+      <li><b>Time bonus</b> when you win: 1000 × 240 ÷ (seconds + 240). That’s about 800 for a 1-minute win, 670 for 2 minutes, 500 for 4 minutes and 290 for 10 minutes, so speed helps but good play matters more.</li>
+      <li>Only wins go on the high-score table.</li>
+    </ul>
     <button type="button" class="close gray">Got it</button>
   </div>
 </div>
@@ -227,6 +235,21 @@
       <p class="about-note">Tips are optional — the game stays free.</p>
     </div>
     <button type="button" class="close gray">Close</button>
+  </div>
+</div>
+
+<div id="stuck-modal" class="modal" role="alertdialog" aria-modal="true" aria-labelledby="stuck-title" aria-describedby="stuck-sub" hidden>
+  <div class="modal-content win">
+    <div id="stuck-badge" aria-hidden="true" class="big-badge"></div>
+    <h3 id="stuck-title">Stuck — game over</h3>
+    <p id="stuck-sub" class="small"></p>
+    <div id="stuck-stats" class="stats-grid three"></div>
+    <p class="small">The clock has stopped. Undo to try a different move, or start over. Leaving with Replay or New game counts as a loss.</p>
+    <div class="btn-row">
+      <button type="button" id="stuck-undo">↶ Undo last move</button>
+      <button type="button" id="stuck-replay">🔁 Replay this deal</button>
+      <button type="button" id="stuck-new" class="primary">🂠 New game</button>
+    </div>
   </div>
 </div>
 

@@ -170,6 +170,9 @@ table.lb tr.new td{background:color-mix(in srgb,var(--accent) 38%,transparent)}
 .brand{flex:1 1 auto;min-width:0}.brand-text{min-width:0}.brand-name,.brand-sub{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .top-actions{flex:none}
 @media (max-width:640px){#topbar{flex-wrap:wrap}.top-actions{gap:3px}.icon-btn{width:35px;height:35px;font-size:1rem;border-radius:10px}.logo{width:30px;height:30px}.brand-name{font-size:.95rem}.brand-sub{font-size:.62rem;letter-spacing:1px}}
+.big-badge{font-size:3rem;line-height:1}
+.stats-grid.three{grid-template-columns:repeat(3,1fr);margin:8px 0}
+#stuck-sub{margin:0 0 6px}
 </style>
 </head>
 <body>
@@ -383,7 +386,15 @@ table.lb tr.new td{background:color-mix(in srgb,var(--accent) 38%,transparent)}
       <li><b>Players and high scores</b>: each player on this device has their own stats. The top 10 scores for Draw 1 and Draw 3 are kept with name, time, moves and date. Tap 👤 to switch players.</li>
       <li>Switch between the <b>Cat</b> and <b>Aviation</b> themes anytime. Left-handed, large-card and colour-blind options are in Settings.</li>
     </ul>
-    <p class="small">Scoring: +10 to a foundation, +5 from the waste to the table, +5 for flipping a card, −15 from a foundation back to the table, and a time bonus when you win.</p>
+    <h4>Stuck = game over</h4>
+    <p>If no move can ever put another card on a foundation or turn over a face-down card, even after cycling through the stock, you’re stuck. The clock stops and a <b>Game over</b> screen appears. You can <b>Undo</b> your last move and keep playing (the clock starts again), <b>Replay</b> the same deal, or start a <b>New game</b>. Replay or New game counts as a loss and ends your win streak. Undo doesn’t.</p>
+    <h4>Scoring</h4>
+    <ul>
+      <li>+10 for each card moved to a foundation, +5 from the waste to the table, +5 for turning over a card, −15 for taking a card back off a foundation.</li>
+      <li>Recycling the stock: free the first time in Draw 1 (the first three times in Draw 3), then −100 (Draw 1) or −20 (Draw 3).</li>
+      <li><b>Time bonus</b> when you win: 1000 × 240 ÷ (seconds + 240). That’s about 800 for a 1-minute win, 670 for 2 minutes, 500 for 4 minutes and 290 for 10 minutes, so speed helps but good play matters more.</li>
+      <li>Only wins go on the high-score table.</li>
+    </ul>
     <button type="button" class="close gray">Got it</button>
   </div>
 </div>
@@ -391,7 +402,7 @@ table.lb tr.new td{background:color-mix(in srgb,var(--accent) 38%,transparent)}
 <div id="about-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="about-title" hidden>
   <div class="modal-content">
     <h3 id="about-title">Purrfect Landing Solitaire</h3>
-    <p class="about-ver" id="about-version">Version 1.0</p>
+    <p class="about-ver" id="about-version">Version 1.1</p>
     <p class="about-lead">A free Klondike solitaire with two themes, cats and aviation. It works offline, has no ads and no sign-up, and your games and stats are saved only on this device.</p>
     <p class="about-made">Made by Val, VA3FOD</p>
     <p class="about-hub">Part of <a id="about-hub" href="https://va3fod.github.io/">Val’s Apps</a>, free games and tools at va3fod.github.io</p>
@@ -402,6 +413,21 @@ table.lb tr.new td{background:color-mix(in srgb,var(--accent) 38%,transparent)}
       <p class="about-note">Tips are optional — the game stays free.</p>
     </div>
     <button type="button" class="close gray">Close</button>
+  </div>
+</div>
+
+<div id="stuck-modal" class="modal" role="alertdialog" aria-modal="true" aria-labelledby="stuck-title" aria-describedby="stuck-sub" hidden>
+  <div class="modal-content win">
+    <div id="stuck-badge" aria-hidden="true" class="big-badge"></div>
+    <h3 id="stuck-title">Stuck — game over</h3>
+    <p id="stuck-sub" class="small"></p>
+    <div id="stuck-stats" class="stats-grid three"></div>
+    <p class="small">The clock has stopped. Undo to try a different move, or start over. Leaving with Replay or New game counts as a loss.</p>
+    <div class="btn-row">
+      <button type="button" id="stuck-undo">↶ Undo last move</button>
+      <button type="button" id="stuck-replay">🔁 Replay this deal</button>
+      <button type="button" id="stuck-new" class="primary">🂠 New game</button>
+    </div>
   </div>
 </div>
 
@@ -664,14 +690,65 @@ table.lb tr.new td{background:color-mix(in srgb,var(--accent) 38%,transparent)}
     if (talonReach(s).some(t => t.draws > 0)) return { move: { t: 'draw' }, source: 'heuristic' };
     return null;
   }
-  /* true when nothing productive is left (only cycling the stock, no playable card anywhere) */
-  function isStuck(s) {
-    if (isWon(s)) return false;
-    const mv = listMoves(s).filter(m => m.t !== 'draw' && !(m.from.t === 'f'));
-    const useful = mv.filter(m => !(m.from.t === 't' && m.to.t === 't' && s.tab[m.from.i].down === s.tab[m.from.i].cards.length - m.n && s.tab[m.from.i].down === 0 && !s.tab[m.to.i].cards.length));
-    if (useful.length) return false;
-    for (const r of talonReach(s)) { const c = top(r.waste); if (canFound(s, c)) return false; for (let j = 0; j < 7; j++) if (canTab(s, c, j)) return false; }
+  /* ---------- stuck / game over ----------
+     A position is STUCK when no sequence of legal moves (table moves, waste moves, draws and stock
+     recycling, even cards taken back down from the foundations) can ever reach a position with more
+     cards on the foundations or fewer face-down cards. Then the game can never be won, so this has
+     no false positives. The search explores every reachable position (breadth-first, duplicates
+     merged); if it runs past its budget we answer "not stuck" to stay safe. */
+  const foundCount = s => s.found[0].length + s.found[1].length + s.found[2].length + s.found[3].length;
+  /* cheap sufficient checks for "a way out exists" (each one is a real 1–2 move path to progress) */
+  function quickProgress(s) {
+    const bottoms = [];                                   // first face-up card of columns that still hide cards
+    for (let i = 0; i < 7; i++) { const col = s.tab[i]; if (col.down > 0 && col.cards.length > col.down) bottoms.push([i, col.cards[col.down]]); }
+    for (let i = 0; i < 7; i++) {
+      const col = s.tab[i], L = col.cards.length; if (L === col.down) continue;
+      if (canFound(s, col.cards[L - 1])) return true;                                   // straight to foundation
+      for (let k = col.down; k < L; k++) {
+        const c = col.cards[k];
+        for (let j = 0; j < 7; j++) {
+          if (j === i || !canTab(s, c, j)) continue;
+          if (k === col.down && col.down > 0) return true;                               // move uncovers a card
+          if (k > col.down && canFound(s, col.cards[k - 1])) return true;                // move frees a foundation card
+        }
+      }
+    }
+    for (const r of talonReach(s)) {
+      const c = top(r.waste); if (canFound(s, c)) return true;
+      for (let j = 0; j < 7; j++) {
+        if (!canTab(s, c, j)) continue;                                                  // waste card lands on column j…
+        for (const [i, b] of bottoms) if (i !== j && isRed(b) !== isRed(c) && rankOf(c) === rankOf(b) + 1) return true; // …and a hiding run can follow
+      }
+    }
+    return false;
+  }
+  function isStuck(s0, opts) {
+    if (isWon(s0)) return false;
+    if (quickProgress(s0)) return false;
+    const budget = (opts && opts.maxNodes) || 30000, f0 = foundCount(s0), d0 = faceDownCount(s0);
+    const seen = new Set([stateKey(s0)]), stack = [s0];
+    while (stack.length) {
+      if (seen.size > budget) return false;                 // too big to prove: assume a way out exists
+      const s = stack.pop();
+      if (s !== s0 && quickProgress(s)) return false;
+      for (const m of listMoves(s)) {
+        const n = apply(s, m);
+        if (foundCount(n) > f0 || faceDownCount(n) < d0) return false;
+        const k = stateKey(n); if (seen.has(k)) continue; seen.add(k); stack.push(n);
+      }
+    }
     return true;
+  }
+  /* game-session helpers shared by the UI and the tests */
+  function tickTimer(meta, dt) { if (meta.counted && !meta.won && !meta.stuck && dt > 0 && dt < 5) meta.elapsed += dt; return meta.elapsed; }
+  function markStuck(meta) { meta.stuck = true; return meta; }
+  /* action: 'undo' | 'new' | 'replay'. Undo reopens play with no stats change; leaving records a loss once. */
+  function leaveStuck(save, meta, action) {
+    meta.stuck = false;
+    if (action === 'undo') return { resume: true, lossRecorded: false };
+    let lossRecorded = false;
+    if (meta.counted && !meta.won && !meta.lost) { recordLoss(save, meta.pid); meta.lost = true; lossRecorded = true; }
+    return { resume: false, lossRecorded };
   }
 
   /* ---------- history (unlimited undo/redo) ---------- */
@@ -702,7 +779,7 @@ table.lb tr.new td{background:color-mix(in srgb,var(--accent) 38%,transparent)}
   }
   const DEFAULT_SETTINGS = { theme: 'cat', draw: 1, winnable: true, sound: true, leftHanded: false, large: false, colorblind: false, seenHelp: false };
   function defaultStats() { return { played: 0, won: 0, streak: 0, bestStreak: 0, bestTime: null, fewestMoves: null, bestScore: 0, wonDraw1: 0, wonDraw3: 0, dailyDone: [] }; }
-  function defaultSave() { return { v: 2, settings: Object.assign({}, DEFAULT_SETTINGS), players: {}, current: null, scores: { d1: [], d3: [] }, game: null }; }
+  function defaultSave() { return { v: 2, scoring: 2, settings: Object.assign({}, DEFAULT_SETTINGS), players: {}, current: null, scores: { d1: [], d3: [] }, game: null }; }
   const num = (v, d, min, max) => (Number.isFinite(v) && v >= (min == null ? -Infinity : min) && v <= (max == null ? Infinity : max) ? v : d);
   const MAX_PLAYERS = 12, MAX_SCORES = 10;
   function cleanName(n) { if (typeof n !== 'string') return ''; return n.replace(/[\u0000-\u001f\u007f<>&"]/g, '').replace(/\s+/g, ' ').trim().slice(0, 20); }
@@ -742,7 +819,11 @@ table.lb tr.new td{background:color-mix(in srgb,var(--accent) 38%,transparent)}
     if (g && typeof g === 'object' && Array.isArray(g.list) && g.list.length && g.list.every(validState) && Number.isInteger(g.index) && g.index >= 0 && g.index < g.list.length) {
       out.game = { list: g.list, index: g.index, mode: ['random', 'winnable', 'daily'].includes(g.mode) ? g.mode : 'random', daily: typeof g.daily === 'string' ? g.daily : null,
         elapsed: num(g.elapsed, 0, 0, 1e8), undos: Math.floor(num(g.undos, 0, 0, 1e9)), hints: Math.floor(num(g.hints, 0, 0, 1e9)), counted: !!g.counted, won: !!g.won,
-        pid: typeof g.pid === 'string' && out.players[g.pid] ? g.pid : null, final: num(g.final, 0, 0) };
+        pid: typeof g.pid === 'string' && out.players[g.pid] ? g.pid : null, final: num(g.final, 0, 0), stuck: !!g.stuck, lost: !!g.lost };
+    }
+    if (raw.scoring !== 2) {                                    // V1.0 saves: re-score with the capped time bonus
+      for (const k of ['d1', 'd3']) { for (const e of out.scores[k]) e.score = Math.max(0, e.score - oldTimeBonus(e.time)) + timeBonus(e.time); out.scores[k].sort(scoreOrder); }
+      for (const id of Object.keys(out.players)) { const mine = [...out.scores.d1, ...out.scores.d3].filter(e => e.pid === id).map(e => e.score); out.players[id].stats.bestScore = mine.length ? Math.max(...mine) : 0; }
     }
     return out;
   }
@@ -813,7 +894,10 @@ table.lb tr.new td{background:color-mix(in srgb,var(--accent) 38%,transparent)}
   }
   function recordStart(save, pid) { ensurePlayer(save).stats; player(save, pid).stats.played++; }
   function recordLoss(save, pid) { const p = player(save, pid); if (p) p.stats.streak = 0; }
-  function timeBonus(sec) { return sec >= 30 ? Math.round(700000 / sec) : 0; }
+  /* time bonus: up to 1000 points, halving at 4 minutes: 1000 × 240 ÷ (seconds + 240) */
+  const BONUS_MAX = 1000, BONUS_HALF = 240;
+  function timeBonus(sec) { sec = Math.max(0, sec || 0); return Math.round(BONUS_MAX * BONUS_HALF / (sec + BONUS_HALF)); }
+  function oldTimeBonus(sec) { return sec >= 30 ? Math.round(700000 / sec) : 0; }
 
   /* ---------- daily / winnable seeds ---------- */
   function dateKey(d) { const p = n => String(n).padStart(2, '0'); return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()); }
@@ -821,7 +905,7 @@ table.lb tr.new td{background:color-mix(in srgb,var(--accent) 38%,transparent)}
   function dailySeed(key, list) { const h = hashStr('purrfect-' + key); return list && list.length ? list[h % list.length] : h; }
 
   return { SUITS, RANKS, suitOf, rankOf, isRed, cardName, rng, shuffledDeck, newGame, clone, SCORE, canFound, canTab, picked, legal, apply, isWon, faceDownCount,
-    listMoves, autoFinishPlan, talonReach, stateKey, solve, replay, hint, isStuck, History, validState, DEFAULT_SETTINGS, defaultStats, defaultSave, sanitize, loadSave,
+    listMoves, autoFinishPlan, talonReach, stateKey, solve, replay, hint, isStuck, quickProgress, tickTimer, markStuck, leaveStuck, BONUS_MAX, BONUS_HALF, oldTimeBonus, History, validState, DEFAULT_SETTINGS, defaultStats, defaultSave, sanitize, loadSave,
     STAMPS, recordWin, recordStart, recordLoss, cleanName, addPlayer, renamePlayer, switchPlayer, removePlayer, player, ensurePlayer, addScore, resetScores, resetPlayerStats, MAX_PLAYERS, MAX_SCORES, timeBonus, dateKey, hashStr, dailySeed };
 });
 </script>
@@ -991,7 +1075,7 @@ table.lb tr.new td{background:color-mix(in srgb,var(--accent) 38%,transparent)}
 });
 </script>
 <script id="pl-app">
-const APP_VERSION = '1.0', APP_STORE_KEY = 'purrfectLandingV1';
+const APP_VERSION = '1.1', APP_STORE_KEY = 'purrfectLandingV1';
 const SEEDS = {"d1":[8015297,5157872,5671331,6135666,1842581,5394676,5192518,7241146,921846,5795731,7688804,1202024,3938227,8898137,2388706,3708854,7604783,1144698,311961,4511268,8649776,4027731,3648235,7184130,2133655,875482,2279851,4793912,8714622,5898297,437427,3472379,5246990,6146334,2069395,8927972,7672816,6382641,8652782,2140364,7427810,5813547,4810645,7030652,808950,2966560,5141200,686256,6146018,7221517,4450325,4147264,3926548,4708715,8664058,115482,8124947,5725174,5814411,3637216,3136865,3219574,2468000,7370366,1536018,3129595,1440871,3804435,7281464,5941513,6510423,8219317,5058958,8743701,137046,4131841,3349594,4934207,8491737,786632,4534834,6176186,6551839,4357869,1346148,6735544,8327663,1318270,3479481,4599544,6144068,5075655,7154605,1243157,6497307,8926429,6947832,5881738,1535856,1414516,6273774,6666454,3194403,5940023,6731431,7518206,479719,2857426,3491441,1818275,341198,1792824,2299949,3925334,7019480,2315591,2986026,3076427,3935868,300890,6403706,545860,7130346,872466,3048733,6696271,358682,6093237,4166486,7095038,5313635,8665158,1851487,1205610,3387696,3806172,1756501,2374979,2938299,8897271,3707643,7217473,996388,3661946,5366450,6140846,6668908,4852710,6696887,695510,1864135,3177951,2389344,1953118,4927157,429321,5890815,2899035,8718184,7690490,682747,3510591,6560618,1660917,4839729,3572895,4138102,6307130,1603310,6416639,2103704,1448346,7108073,2641781,1296650,5395148,7578295,7362986,4303152,228565,7424717,4405524,7541382,4395686,44851,1536538,4603351,5515895,1901902,7217979,2194266,6510037,3871564,8019599,7648729,8974848,2175514,3754016,743773,6803329,7251299,7145220,6241536,492543,4217065,2199720,7866574,7716362,6172201,3002086,2916439,5367287,5880993,4630135,4017674,4797559,5490957,7312453,2882541,2849114,2557608,6311169,35324,7993724,3387106,8141413,690986,1693728,1717774,8210863,1146861,3110127,7563323,8898592,4490653,1009642,3518748,6086993,8260938,8188695,6607143,8044600,5748801,4549415,7868673,3018086,2025838,5403992,8691500,1367945,6303135,7900939,4719314,411595,8865099,7841442,2200332,507287,845587,6556246,1096856,1937758,4465263,8906476,328173,7686308,2354953,1622405,554718,6202847,5725537,1587297,7490064,1939381,555590,1829525,2287152,3516014,504688,6861871,3699407,6484691,5697901,8117797,1715656,6603509,3257135,8275346,2231728,8760181,1380603,5286184,1764943,3482435,1677554,1987983,8731998,6416401,4740749,7855931,7931108,8733869,7290528,5221457,5193959,753076,7759170,3586270,8351073,7085009,2095854,6169011,8454377,8521538,2967710,1692628,2128175,4275702,8201608,4785750,2238381,3917089,4419106,8082220,142609,33166,4410207,7302546,5889422,8601806,5064201,2823155,2568838,356328,909271,7153910,4884121,7500299,2322937,8765215,1485489,3142960,1826026,1460800,6786174,5479026,3962148,478068,7305042,6564090,3788374,3508643,3030948,3794969,6894006,6434930,1863229,3884600,4781713,6155366,104112,5309891,762943,2795873,6201999,252124,1248444,2014578,6769302,4799217,994590,2390062,3300395,5101123,60199,1829470,8777793,236408,6272965,1996607,4100854,2004622,4573983,6946029,2983006,5162407,5504881,6640134,8304663,3758581,3559741,1546438,5603757,6523643,3900694,5848103,6964863,998670,2672688,8613960],"d3":[1131262,3263718,7255140,1203393,1637048,4782971,8807284,8426556,8333457,5797989,1650981,37073,1926540,848106,7443405,3931415,7284256,304944,183512,4960061,5929945,2904499,2665591,338340,3235270,3796684,8810921,5340755,6164275,6434974,4970980,3106060,6375870,7745880,6656675,4046398,4755182,4856784,2108764,304650,5441778,4441114,7424516,5757145,3456324,8951772,8414014,8828008,5968685,643414,8577828,4346677,5494310,7786079,514910,6114996,3909359,8563735,7136975,2360849,3642440,2864342,6664161,1409535,3540799,3673171,3154383,4204978,6024952,5200735,5080013,5944328,1526526,4970748,8796320,1288885,8461679,8559173,2425517,2891583,6261640,7304984,6103882,8485696,2995709,421227,33366,2591937,2470801,3214566,6717090,4123079,5013786,7832055,8569827,3536268,1541105,1820337,728951,7878734,4727866,2554029,1733592,2995765,8342275,5505104,4157079,3185368,4588738,2155229,7908864,6640096,641163,2633464,1934192,8486807,1293752,984815,3293049,335632,6259072,2936909,1009327,3394993,1248155,5782439,354748,3445582,945750,7995550,8712446,8260119,4193811,8657632,4109071,8751106,861787,5374260,2670751,4616916,4583066,7470698,8736045,8487294,8933803,3772898,7309904,3806892,5634460,6326559,2835106,190347,7042112,4026927,2499034,8055292,3228240,8945004,5107581,274910,3250613,956886,1890188,846773,1385600,2943787,6178517,8266073,1163142,1390833,7102094,3308581,8473613,6295861,3366520,1420932,5705775,6390240,6164007,2401731,2996962,535428,6235997,543305,7139300,6664122,2636396,683912,8948040,1687308,7973375,2340851,7590079,1598191,3996248,2456023,4053392,2731747,4915060,3962707,2118068,366499,6833483,8113424,5025019,5161989,7518531,4953101,3319539,2954143,5660882,4279001,6055662,565514,3011739,219288,7553622,5325936,8488939,7978499,3023718,7451945,3957784,8148474,8414235,7727766,5670827,894123,6711067,5721021,1143550,118759,2860592,8842310,1911108,7896928,3945249,3106747,7444652,3534657,699848,4266813,5113059,7027107,3138702,7718045,1240210,7197497,8819641,8821522,2120021,2431957,4318629,5609414,8285318,4077870,7293897,7940963,7102376,6213946,8341566,1818853,251981,2452597,6425867,124778,8060405,5201720,5862038,7974888,7878668,818835,152297,2344957,4351647,1273465,74358,7785755,4792366,7959540,4665253,8988916,6903201,5996823,7973633,4164742,8395487,7643950,5964827,8194319,3620829,6361829,4635806,204974,3823462,8661784,8387379,3110354,7056769,2687851,960352,8482264,196381,5570219,3026110,6736637,2865107,1056707,5035466,392545,5281733,8815202,533327,3285143,4825011,4727616,4269434,422853,920714,7771390,2123871,8918203,5283006,7527164,6364628,6059356,1836402,3168682,6195230,4219129,7370681,3501558,4335380,3263928,1482310,7101957,4092703,1669629,3810852,5011421,1849662,5777211,7013920,8478383,7163112,3681764,3525589,8953539,7444116,6227627,5158949,977080,7704187,8878039,2532974,6083833,6227794,5164572,7348302,6479509,7634535,3758378,3216255,3624192,7731788,5434357,2440476,5021446,5527241,1691211,1782677,7963616,952206,8272711,2756124,8629194,6530020,3898367,7325842,3787250,126867,6689817,4959932,6853150,749751,5204500,5599175,56971,8573684,5460828,5881139,7352761,4921080,219626,8192310,7930945,2657685,66969,4860157,3247439]};
 /* Purrfect Landing Solitaire — UI. Depends on PLCore, PLArt, SEEDS, APP_* constants. */
 'use strict';
@@ -999,7 +1083,7 @@ const C = PLCore, A = PLArt, $ = id => document.getElementById(id);
 const KEY = APP_STORE_KEY;
 const DEV_EMAIL = 'aschiuta@gmail.com';
 let save, hist, meta, faces = [], backUrl = '', L = null, busy = false, cardEls = [], slotEls = {}, lastPos = [];
-let lastMoveAt = 0, drag = null, tapLock = 0, tapAt = null, timerId = 0, hintTimer = 0, stuckShownFor = -1, bannerTimer = 0;
+let lastMoveAt = 0, drag = null, tapLock = 0, tapAt = null, timerId = 0, hintTimer = 0, bannerTimer = 0, stuckTimer = 0;
 
 /* ---------------- persistence ---------------- */
 function loadAll() {
@@ -1071,11 +1155,12 @@ const Sfx = (() => {
   function spool(dur) { const t = ctx.currentTime, o = ctx.createOscillator(), g = ctx.createGain(); o.type = 'sawtooth'; o.frequency.setValueAtTime(80, t); o.frequency.exponentialRampToValueAtTime(420, t + dur); g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.07, t + dur * 0.5); g.gain.exponentialRampToValueAtTime(0.0001, t + dur); const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 1400; o.connect(f).connect(g).connect(master); o.start(t); o.stop(t + dur + 0.05); whoosh(dur); }
   /* every effect is named per theme; log keeps the last few for tests even when muted */
   const MAP = {
-    cat: { move: 'paw-tap', flip: 'paw-tap', draw: 'paw-tap', found: 'purr', bad: 'hiss', deal: 'meow', win: 'meow+purr', hint: 'meow', theme: 'meow', stamp: 'chirp', auto: 'purr' },
-    air: { move: 'whoosh', flip: 'whoosh', draw: 'whoosh', found: 'atc-chime', bad: 'warning-horn', deal: 'engine-spool', win: 'flyby', hint: 'atc-chime', theme: 'atc-chime', stamp: 'atc-chime', auto: 'atc-chime' }
+    cat: { stuck: 'yawn', move: 'paw-tap', flip: 'paw-tap', draw: 'paw-tap', found: 'purr', bad: 'hiss', deal: 'meow', win: 'meow+purr', hint: 'meow', theme: 'meow', stamp: 'chirp', auto: 'purr' },
+    air: { stuck: 'holding-pattern', move: 'whoosh', flip: 'whoosh', draw: 'whoosh', found: 'atc-chime', bad: 'warning-horn', deal: 'engine-spool', win: 'flyby', hint: 'atc-chime', theme: 'atc-chime', stamp: 'atc-chime', auto: 'atc-chime' }
   };
   const PLAY = {
     'paw-tap': pawTap, purr: () => purr(0.7), hiss, meow: () => meow(1), 'meow+purr': () => { meow(1); meow(1.2, 0.7); purr(2.4); }, chirp: () => { tone('triangle', 900, 1400, 0.09, 0.2); tone('triangle', 1300, 1000, 0.1, 0.16, 0.08); },
+    yawn: () => { meow(0.62); purr(1.0); }, 'holding-pattern': () => { tone('sine', 880, 0, 0.35, 0.2); tone('sine', 659, 0, 0.35, 0.2, 0.3); tone('sine', 523, 0, 0.6, 0.2, 0.6); spool(0.9); },
     whoosh: () => whoosh(), 'atc-chime': () => { atcBeep(); chime(0.25); }, 'warning-horn': horn, 'engine-spool': () => spool(1.1), flyby: () => { engine(3.2); chime(2.2); }
   };
   const log = [];
@@ -1085,7 +1170,7 @@ const Sfx = (() => {
     if (on) try { PLAY[name](); } catch (e) {}
   }
   const api = { log };
-  for (const ev of ['move', 'flip', 'draw', 'found', 'bad', 'deal', 'win', 'hint', 'theme', 'stamp', 'auto']) api[ev] = () => fx(ev);
+  for (const ev of ['stuck', 'move', 'flip', 'draw', 'found', 'bad', 'deal', 'win', 'hint', 'theme', 'stamp', 'auto']) api[ev] = () => fx(ev);
   api.place = api.move; api.shuffle = api.deal; api.autoStart = api.auto;
   return api;
 })();
@@ -1187,7 +1272,7 @@ function updateHud() {
   $('hud-mode').textContent = (meta.mode === 'daily' ? 'Daily · ' : '') + 'Draw ' + s.draw + (meta.mode === 'winnable' ? ' · Winnable' : '');
   $('hud-mode').title = 'Deal #' + s.seed;
   $('btn-undo').disabled = !hist.canUndo() || meta.won; $('btn-redo').disabled = !hist.canRedo() || meta.won;
-  $('btn-hint').disabled = meta.won;
+  $('btn-hint').disabled = meta.won || !!meta.stuck;
   const plan = !meta.won && C.faceDownCount(s) === 0 ? C.autoFinishPlan(s) : null;
   $('btn-auto').hidden = !plan;
 }
@@ -1205,7 +1290,7 @@ function newDeal(o) {
   else if (mode === 'winnable') seed = pickWinnable(draw);
   else seed = (Math.random() * 9000000 + 1000) | 0;
   if (mode === 'daily' && o.daily) daily = o.daily;
-  hist = new C.History(C.newGame(seed, draw)); meta = freshMeta(mode, daily); stuckShownFor = -1;
+  hist = new C.History(C.newGame(seed, draw)); meta = freshMeta(mode, daily); clearTimeout(stuckTimer);
   clearHints(); hideBanner(); closeAllModals();
   // deal animation: start all cards at the stock
   for (let c = 0; c < 52; c++) lastPos[c] = null;
@@ -1217,10 +1302,12 @@ function newDeal(o) {
   for (let c = 0; c < 52; c++) cardEls[c].style.transition = '';
   render(); Sfx.shuffle();
   setTimeout(() => { for (const el of cardEls) el.style.transitionDelay = ''; }, 1200);
-  persist(); return P;
+  persist();
+  if (C.isStuck(hist.state, { maxNodes: 15000 })) stuckTimer = setTimeout(() => { if (!meta.stuck && !meta.won && C.isStuck(hist.state, { maxNodes: 15000 })) onStuck(); }, 1100);
+  return P;
 }
 function play(mv, why) {
-  if (meta.won || busy) return false;
+  if (meta.won || meta.stuck || busy) return false;
   const before = hist.state, n = hist.play(mv);
   if (!n) { Sfx.bad(); return false; }
   lastMoveAt = performance.now();
@@ -1234,10 +1321,9 @@ function afterMove() {
   const s = hist.state;
   if (C.isWon(s)) { onWin(); return; }
   persist();
-  if (hist.index !== stuckShownFor && C.isStuck(s)) { stuckShownFor = hist.index; showBanner('No more useful moves.', 'Undo', () => doUndo()); }
-  else if (!C.isStuck(s)) hideBanner();
+  if (C.isStuck(s, { maxNodes: 15000 })) onStuck();
 }
-function doUndo() { if (busy || meta.won || !hist.canUndo()) return; hist.undo(); meta.undos++; clearHints(); hideBanner(); Sfx.place(); render(); persist(); }
+function doUndo() { if (busy || meta.won || !hist.canUndo()) return; if (meta.stuck) C.leaveStuck(save, meta, 'undo'); hist.undo(); meta.undos++; clearHints(); hideBanner(); Sfx.place(); render(); persist(); }
 function doRedo() { if (busy || meta.won || !hist.canRedo()) return; hist.redo(); clearHints(); Sfx.place(); render(); afterMove(); }
 function doDraw() { const s = hist.state; if (!s.stock.length && !s.waste.length) { Sfx.bad(); return; } play({ t: 'draw' }); }
 
@@ -1436,6 +1522,28 @@ function submitName() {
   if (first && !save.settings.seenHelp) { save.settings.seenHelp = true; persist(); openModal('help-modal'); }
 }
 
+/* ---------------- stuck = game over ---------------- */
+function onStuck() {
+  if (meta.stuck || meta.won) return;
+  C.markStuck(meta); clearHints(); hideBanner(); persist(); Sfx.stuck(); showStuck();
+}
+function showStuck() {
+  const s = hist.state, air = save.settings.theme === 'air';
+  $('stuck-badge').textContent = air ? '🛩️' : '😿';
+  $('stuck-title').textContent = air ? 'Holding pattern — no runway available' : 'Cat nap time — no moves left';
+  $('stuck-sub').textContent = air ? 'Game over: no move can land another card or turn one over, even by cycling the stock.' : 'Game over: the kitty yawns. No move can put another card home or turn one over, even by cycling the stock.';
+  $('stuck-stats').innerHTML = [['Time', fmtTime(meta.elapsed)], ['Moves', s.moves], ['Score', s.score]].map(([k, v]) => `<div><b>${v}</b><span>${k}</span></div>`).join('');
+  $('stuck-undo').disabled = !hist.canUndo();
+  updateHud(); openModal('stuck-modal');
+}
+function leaveStuckTo(action) {
+  const s = hist.state;
+  if (action === 'undo') { closeAllModals(); doUndo(); return; }
+  C.leaveStuck(save, meta, action); persist();
+  if (action === 'replay') newDeal({ seed: s.seed, draw: s.draw, mode: meta.mode, daily: meta.daily });
+  else newDeal({});
+}
+
 /* ---------------- celebrations ---------------- */
 function celebrate(done) {
   const cv = $('fx'), ctx = cv.getContext('2d'), dpr = Math.min(2, window.devicePixelRatio || 1);
@@ -1538,7 +1646,7 @@ function startTimer() {
   clearInterval(timerId); let lastT = performance.now();
   timerId = setInterval(() => {
     const now = performance.now(), dt = (now - lastT) / 1000; lastT = now;
-    if (meta.counted && !meta.won && !document.hidden && dt < 5) { meta.elapsed += dt; $('hud-time').textContent = fmtTime(meta.elapsed); if (Math.floor(meta.elapsed) % 10 === 0) persist(); }
+    if (!document.hidden && C.tickTimer(meta, dt) && meta.counted && !meta.won && !meta.stuck) { $('hud-time').textContent = fmtTime(meta.elapsed); if (Math.floor(meta.elapsed) % 10 === 0) persist(); }
   }, 500);
 }
 
@@ -1555,7 +1663,7 @@ function copyDevEmail() {
 function init() {
   const wasCorrupt = loadAll();
   initBoard(); buildArt(); computeLayout();
-  if (save.game) { hist = new C.History(null, save.game.list, save.game.index); meta = Object.assign(freshMeta('random'), save.game); delete meta.list; delete meta.index; render({ instant: true }); if (meta.won) $('hud-score').textContent = meta.final || hist.state.score; }
+  if (save.game) { hist = new C.History(null, save.game.list, save.game.index); meta = Object.assign(freshMeta('random'), save.game); delete meta.list; delete meta.index; render({ instant: true }); if (meta.won) $('hud-score').textContent = meta.final || hist.state.score; if (meta.stuck) setTimeout(showStuck, 50); }
   else { meta = null; newDeal({}); }
   updatePlayerUI();
   if (!C.player(save)) askName('first');
@@ -1576,7 +1684,8 @@ function init() {
   const syncSound = () => { $('btn-sound').textContent = save.settings.sound ? '🔊' : '🔇'; $('btn-sound').setAttribute('aria-pressed', save.settings.sound); };
   $('btn-sound').onclick = () => { save.settings.sound = !save.settings.sound; syncSound(); persist(); if (save.settings.sound) Sfx.place(); toast(save.settings.sound ? 'Sound on' : 'Sound off'); };
   syncSound();
-  document.querySelectorAll('.modal').forEach(m => { m.addEventListener('click', e => { if (e.target === m || e.target.closest('.close')) closeAllModals(); }); });
+  document.querySelectorAll('.modal').forEach(m => { m.addEventListener('click', e => { if (m.id === 'stuck-modal') return; if (e.target === m || e.target.closest('.close')) closeAllModals(); }); });
+  $('stuck-undo').onclick = () => leaveStuckTo('undo'); $('stuck-replay').onclick = () => leaveStuckTo('replay'); $('stuck-new').onclick = () => leaveStuckTo('new');
   document.querySelectorAll('[data-open]').forEach(bt => bt.onclick = () => openModal(bt.dataset.open));
   $('menu-daily').onclick = () => newDeal({ mode: 'daily' });
   document.querySelectorAll('#new-modal [data-draw]').forEach(bt => bt.onclick = () => { save.settings.draw = +bt.dataset.draw; syncNewUI(); persist(); });
@@ -1604,7 +1713,7 @@ function init() {
   $('win-new').onclick = () => newDeal({});
   $('about-copy').onclick = copyDevEmail;
   document.addEventListener('keydown', e => {
-    if (e.key === 'Escape') { if (closeAllModals()) e.preventDefault(); return; }
+    if (e.key === 'Escape') { if (!$('stuck-modal').hidden) return; if (closeAllModals()) e.preventDefault(); return; }
     if (anyModal() || e.altKey || e.metaKey) return;
     if (e.target && /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
     const k = e.key.toLowerCase(), ctrl = e.ctrlKey;

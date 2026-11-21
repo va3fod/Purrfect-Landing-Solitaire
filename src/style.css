@@ -160,3 +160,6 @@ table.lb tr.new td{background:color-mix(in srgb,var(--accent) 38%,transparent)}
 .brand{flex:1 1 auto;min-width:0}.brand-text{min-width:0}.brand-name,.brand-sub{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .top-actions{flex:none}
 @media (max-width:640px){#topbar{flex-wrap:wrap}.top-actions{gap:3px}.icon-btn{width:35px;height:35px;font-size:1rem;border-radius:10px}.logo{width:30px;height:30px}.brand-name{font-size:.95rem}.brand-sub{font-size:.62rem;letter-spacing:1px}}
+.big-badge{font-size:3rem;line-height:1}
+.stats-grid.three{grid-template-columns:repeat(3,1fr);margin:8px 0}
+#stuck-sub{margin:0 0 6px}

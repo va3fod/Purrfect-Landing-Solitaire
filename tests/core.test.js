@@ -168,13 +168,113 @@ test('hint: legal suggestion on a fresh deal; none when won', () => {
   for (const seed of [SEEDS.d1[3], 12345, 777]) { const s = C.newGame(seed, 1), h = C.hint(s); assert.ok(h && C.legal(s, h.move)); }
   assert.equal(C.hint(make({ found: [13, 13, 13, 13] })), null);
 });
-test('stuck: detects a dead end, not a fresh deal', () => {
-  assert.equal(C.isStuck(C.newGame(SEEDS.d1[0], 1)), false);
-  // two blocked columns, nothing in stock: 2♠ and 2♥ wait on red/black 3s and Aces that are buried
-  const hid = r => [card(r, S), card(r, H)];
-  const s = make({ found: [0, 0, 13, 13], tab: [{ cards: [card(1, H), ...[3, 4, 5, 6, 7, 8].flatMap(hid), card(2, S)], down: 13 },
-    { cards: [card(1, S), ...[9, 10, 11, 12, 13].flatMap(hid), card(2, H)], down: 11 }] });
-  assert.ok(C.validState(s)); assert.equal(s.stock.length, 0); assert.ok(C.isStuck(s));
+/* dead layout: tops K♠ K♥ K♦ K♣ J♠ J♥ J♦ (none fit on each other); Aces, Queens and 10s are face down; the rest in the stock */
+function deadLayout(draw, stockOrder) {
+  const hidden = [card(1, S), card(12, H), card(10, H), card(1, H), card(12, D), card(10, D), card(1, D), card(12, S), card(10, S), card(1, CL), card(12, CL), card(10, CL)];
+  const tops = [card(13, S), card(13, H), card(13, D), card(13, CL), card(11, S), card(11, H), card(11, D)];
+  const split = [2, 2, 2, 2, 2, 1, 1]; let k = 0;
+  const tab = tops.map((t, i) => { const down = hidden.slice(k, k + split[i]); k += split[i]; return { cards: [...down, t], down: down.length }; });
+  return make({ draw, tab, stock: stockOrder || [] });
+}
+test('stuck: true dead position in Draw 1 and Draw 3', () => {
+  for (const draw of [1, 3]) {
+    const s = deadLayout(draw); assert.ok(C.validState(s)); assert.equal(s.stock.length, 33);
+    assert.equal(C.isStuck(s), true, 'draw ' + draw);
+    assert.equal(C.solve(s, { maxNodes: 50000 }).solved, false);
+    let t = s; for (let i = 0; i < 40; i++) t = C.apply(t, { t: 'draw' });   // cycling the stock changes nothing
+    assert.equal(C.isStuck(t), true);
+  }
+});
+test('stuck: looks stuck but stock cycling helps → not stuck', () => {
+  // Draw 1: swap the buried A♥ into the stock, deep down. No move is available right now except drawing.
+  const s = deadLayout(1); const ai = s.tab[1].cards.indexOf(card(1, H)); assert.ok(ai >= 0); s.tab[1].cards[ai] = s.stock[0]; s.stock[0] = card(1, H);
+  assert.ok(C.validState(s)); assert.deepEqual(C.listMoves(s).filter(m => m.t !== 'draw'), []);
+  assert.equal(C.isStuck(s), false);
+});
+test('stuck: Draw 3 accessibility — same cards, stuck or not depending on stock order', () => {
+  // A♥ sits 2nd from the top of the stock: in Draw 3 it is never on top while the stock order stays the same…
+  const base = deadLayout(3); const ai = base.tab[1].cards.indexOf(card(1, H)); assert.ok(ai >= 0);
+  const a = C.clone(base); a.tab[1].cards[ai] = a.stock[a.stock.length - 2]; a.stock[a.stock.length - 2] = card(1, H);
+  assert.ok(C.validState(a)); assert.equal(C.isStuck(a), true, 'draw 3: A♥ never reachable');
+  const a1 = C.clone(a); a1.draw = 1; assert.equal(C.isStuck(a1), false, 'same cards in draw 1: reachable');
+  // …but if the 3rd card from the top (always reachable) can be played to the table, the order shifts and A♥ comes up.
+  const b = C.clone(a); const qc = b.tab.find(c => c.cards.includes(card(12, D))); const third = b.stock.length - 3;
+  qc.cards[qc.cards.indexOf(card(12, D))] = b.stock[third]; b.stock[third] = card(12, D);
+  assert.ok(C.validState(b)); assert.equal(C.isStuck(b), false, 'Q♦ onto K♠ frees A♥');
+  const end = C.solve(b, { maxNodes: 1000 }); assert.ok(end.nodes > 0);
+});
+test('stuck: never claimed on any position along the solutions of all 800 winnable deals', () => {
+  let calls = 0;
+  for (const [draw, list] of [[1, SEEDS.d1], [3, SEEDS.d3]]) for (const seed of list) {
+    let s = C.newGame(seed, draw); const r = C.solve(s, { maxNodes: 40000 }); assert.ok(r.solved, 'seed ' + seed);
+    for (const m of r.moves) { assert.equal(C.isStuck(s), false, `seed ${seed} draw ${draw} move ${calls}`); s = C.apply(s, m); calls++; }
+    assert.equal(C.isStuck(s), false);
+  }
+  assert.ok(calls > 50000);
+});
+test('stuck: seeded dead ends used by the browser tests', () => {
+  const cases = [[5763, 1, mv(T(1), T(6))], [201, 3, mv(T(3), T(5))]];
+  for (const [seed, draw, m] of cases) {
+    const s = C.newGame(seed, draw); assert.equal(C.isStuck(s), false); const n = C.apply(s, m); assert.ok(n);
+    assert.equal(C.isStuck(n), true); assert.equal(C.solve(n, { maxNodes: 200000 }).solved, false);
+  }
+});
+test('stuck: whatever the budget, a "stuck" answer is backed by the solver (random play)', () => {
+  let stuck = 0;
+  for (let g = 0; g < 120; g++) {
+    let s = C.newGame(7000 + g, g % 2 ? 3 : 1); const r = C.rng(g);
+    for (let i = 0; i < 400 && !C.isWon(s); i++) { const ms = C.listMoves(s).filter(m => !(m.t === 'move' && m.from.t === 'f')), nd = ms.filter(m => m.t !== 'draw'); const m = nd.length && r() < 0.5 ? nd[Math.floor(r() * nd.length)] : ms[Math.floor(r() * ms.length)]; s = C.apply(s, m); }
+    if (C.isStuck(s)) { stuck++; assert.equal(C.solve(s, { maxNodes: 60000 }).solved, false); assert.equal(C.isStuck(s, { maxNodes: 300000 }), true); }
+  }
+  assert.ok(stuck > 3);
+});
+test('stuck: a won game is never stuck; budget exhaustion answers not stuck', () => {
+  assert.equal(C.isStuck(make({ found: [13, 13, 13, 13] })), false);
+  assert.equal(C.isStuck(deadLayout(1), { maxNodes: 1 }), false);
+});
+test('game over: timer stops while stuck and resumes after undo', () => {
+  const meta = { counted: true, won: false, stuck: false, elapsed: 10 };
+  C.tickTimer(meta, 1); assert.equal(meta.elapsed, 11);
+  C.markStuck(meta); C.tickTimer(meta, 1); C.tickTimer(meta, 2); assert.equal(meta.elapsed, 11);
+  const sv = C.defaultSave(); C.addPlayer(sv, 'Val');
+  const r = C.leaveStuck(sv, meta, 'undo'); assert.deepEqual(r, { resume: true, lossRecorded: false }); assert.equal(meta.stuck, false);
+  C.tickTimer(meta, 1); assert.equal(meta.elapsed, 12);
+  C.tickTimer({ counted: false, elapsed: 0 }, 1); const w = { counted: true, won: true, elapsed: 5 }; C.tickTimer(w, 1); assert.equal(w.elapsed, 5);
+  C.tickTimer(meta, 30); assert.equal(meta.elapsed, 12);           // long gaps (sleeping tab) don't count
+});
+test('game over: loss recorded once, only when leaving via New game or Replay', () => {
+  const sv = C.defaultSave(); const pid = C.addPlayer(sv, 'Val');
+  C.recordStart(sv, pid); C.recordWin(sv, { pid, timeSec: 100, moves: 100, undos: 0, hints: 0, draw: 1, score: 500 });
+  C.recordStart(sv, pid); C.recordWin(sv, { pid, timeSec: 100, moves: 100, undos: 0, hints: 0, draw: 1, score: 400 });
+  assert.equal(sv.players[pid].stats.streak, 2);
+  const meta = { counted: true, won: false, stuck: false, pid, elapsed: 50 }; C.recordStart(sv, pid);
+  const scores = JSON.stringify(sv.scores);
+  C.markStuck(meta); C.leaveStuck(sv, meta, 'undo'); assert.equal(sv.players[pid].stats.streak, 2);
+  C.markStuck(meta); const r = C.leaveStuck(sv, meta, 'replay'); assert.equal(r.lossRecorded, true);
+  const st = sv.players[pid].stats; assert.equal(st.streak, 0); assert.equal(st.bestStreak, 2); assert.equal(st.played, 3); assert.equal(st.won, 2);
+  assert.equal(C.leaveStuck(sv, meta, 'new').lossRecorded, false);   // not twice
+  assert.equal(JSON.stringify(sv.scores), scores);                    // game over never adds a high score
+  const fresh = { counted: false, won: false, stuck: true }; assert.equal(C.leaveStuck(sv, fresh, 'new').lossRecorded, false); // dead at the deal, no move made
+});
+test('scoring: capped, smooth time bonus', () => {
+  assert.equal(C.timeBonus(0), C.BONUS_MAX); assert.equal(C.timeBonus(C.BONUS_HALF), C.BONUS_MAX / 2);
+  let prev = Infinity; for (let t = 0; t <= 3600; t += 15) { const b = C.timeBonus(t); assert.ok(b <= 1000 && b >= 0 && b <= prev); prev = b; }
+  assert.equal(C.timeBonus(120), 667); assert.equal(C.timeBonus(600), 286);
+  assert.ok(C.timeBonus(30) - C.timeBonus(300) < 700);                 // a 10× faster win is worth far less than V1.0's ~22,000
+});
+test('save: V1.0 high scores are re-scored with the capped bonus', () => {
+  const sv = C.defaultSave(); const pid = C.addPlayer(sv, 'Val'); delete sv.scoring;
+  sv.scores.d1 = [{ name: 'Val', pid, score: 12576, time: 57, moves: 176, date: '2026-11-20', at: 1 }, { name: 'Val', pid, score: 3000, time: 400, moves: 120, date: '2026-11-20', at: 2 }];
+  sv.players[pid].stats.bestScore = 12576;
+  const d = C.loadSave(JSON.stringify(sv)).data;
+  assert.equal(d.scoring, 2);
+  const byT = t => d.scores.d1.find(e => e.time === t).score;
+  assert.equal(byT(57), 12576 - 12281 + C.timeBonus(57)); assert.equal(byT(400), 3000 - 1750 + C.timeBonus(400));
+  assert.ok(d.scores.d1[0].score >= d.scores.d1[1].score);            // re-sorted (the slow win now ranks first)
+  assert.equal(d.players[pid].stats.bestScore, Math.max(byT(57), byT(400)));
+  const again = C.loadSave(JSON.stringify(d)).data; assert.deepEqual(again.scores, d.scores);   // only once
+  const g = C.loadSave(JSON.stringify({ scoring: 2, game: { list: [C.newGame(1, 1)], index: 0, stuck: true, lost: true } })).data.game;
+  assert.equal(g.stuck, true); assert.equal(g.lost, true);
 });
 test('save: missing, corrupt and wrong-shaped data fall back to defaults', () => {
   assert.equal(C.loadSave(null).corrupt, false); assert.deepEqual(C.loadSave(null).data, C.defaultSave());
@@ -275,7 +375,7 @@ test('daily: same date → same winnable deal; time bonus', () => {
   const k = C.dateKey(new Date(2026, 10, 20)); assert.equal(k, '2026-11-20');
   assert.equal(C.dailySeed(k, SEEDS.d1), C.dailySeed(k, SEEDS.d1)); assert.ok(SEEDS.d1.includes(C.dailySeed(k, SEEDS.d1)));
   assert.notEqual(C.dailySeed('2026-11-21', SEEDS.d1), undefined);
-  assert.equal(C.timeBonus(20), 0); assert.equal(C.timeBonus(100), 7000);
+  assert.equal(C.timeBonus(0), 1000); assert.equal(C.timeBonus(240), 500); assert.equal(C.timeBonus(60), 800);
 });
 test('listMoves: every listed move is legal and fresh deals have the draw', () => {
   for (const seed of [1, 2, 3, 4, 5]) { const s = C.newGame(seed, 1), ms = C.listMoves(s); assert.ok(ms.some(m => m.t === 'draw')); for (const m of ms) assert.ok(C.legal(s, m)); }

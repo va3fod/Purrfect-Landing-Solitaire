@@ -80,7 +80,7 @@ async function run(cfg) {
   await p.click('#btn-help'); check(`${T}: ? button opens How to play`, await visible(p, '#help-modal') && (await p.textContent('#help-modal')).includes('warning horn'));
   await closeModals(p);
   await p.click('#btn-about'); const about = await p.textContent('#about-modal');
-  check(`${T}: About shows version, credit and tip line`, await visible(p, '#about-modal') && about.includes('Version 1.0') && about.includes('Made by Val, VA3FOD') && about.includes('Interac e-Transfer to aschiuta@gmail.com'));
+  check(`${T}: About shows version, credit and tip line`, await visible(p, '#about-modal') && about.includes('Version ' + (await ev(p, () => __PL.version))) && about.includes('Made by Val, VA3FOD') && about.includes('Interac e-Transfer to aschiuta@gmail.com'));
   check(`${T}: About links back to Val's Apps`, (await p.getAttribute('#about-hub', 'href')) === 'https://va3fod.github.io/');
   if (SHOOT && cfg.tag === 'phone') await p.screenshot({ path: path.join(SHOTS, 'phone_about.png') });
   await closeModals(p);
@@ -243,6 +243,59 @@ async function run(cfg) {
     await p.reload(); await p.waitForFunction(() => window.__PL);
     check(`${T}: stats persist after reload`, (await ev(p, () => __PL.core.player(__PL.save()).stats.won)) === 1);
   }
+
+  // --- stuck = game over (seeded dead ends) ---
+  for (const sc of [{ theme: 'cat', seed: 5763, draw: 1, mv: { t: 'move', from: { t: 't', i: 1 }, to: { t: 't', i: 6 }, n: 1 }, title: 'Cat nap time', snd: 'yawn' },
+                    { theme: 'air', seed: 201, draw: 3, mv: { t: 'move', from: { t: 't', i: 3 }, to: { t: 't', i: 5 }, n: 1 }, title: 'Holding pattern', snd: 'holding-pattern' }]) {
+    const L = `${T} [${sc.theme} stuck, draw ${sc.draw}]`;
+    await closeModals(p);
+    for (let k = 0; k < 2 && (await ev(p, () => document.body.className)) !== 'theme-' + sc.theme; k++) { await p.click('#btn-theme'); await sleep(150); }
+    if (!(await ev(p, () => __PL.save().settings.sound))) { await p.keyboard.press('m'); await sleep(80); }
+    await ev(p, o => __PL.newDeal({ seed: o.seed, draw: o.draw, mode: 'random' }), sc); await sleep(1300);
+    check(`${L}: fresh deal is not flagged`, !(await visible(p, '#stuck-modal')) && !(await ev(p, () => __PL.meta().stuck)));
+    const before = await ev(p, () => ({ st: __PL.core.player(__PL.save()).stats, rows: __PL.save().scores.d1.length + __PL.save().scores.d3.length }));
+    await uiMove(p, inp, { t: 'draw' }); await p.keyboard.press('u'); await waitIdle(p); await sleep(2600);   // clock running, toasts gone
+    check(`${L}: dead-end move played through the UI`, await uiMove(p, inp, sc.mv, 'drag'));
+    await p.waitForSelector('#stuck-modal:not([hidden])', { timeout: 4000 }).catch(() => {});
+    check(`${L}: game-over screen shows`, await visible(p, '#stuck-modal') && (await p.textContent('#stuck-title')).includes(sc.title));
+    const ss = await p.textContent('#stuck-stats');
+    check(`${L}: game-over shows time, moves and score`, ss.includes('Time') && ss.includes('Moves') && ss.includes('Score') && ss.includes('1Moves'));
+    const sn = await ev(p, () => __PL.sounds.filter(x => x.ev === 'stuck').pop() || {});
+    check(`${L}: themed game-over sound (${sc.snd})`, sn.name === sc.snd && sn.theme === sc.theme && sn.played);
+    if (SHOOT && cfg.tag === 'phone') await p.screenshot({ path: path.join(SHOTS, `phone_stuck_${sc.theme}.png`) });
+    const e0 = await ev(p, () => __PL.meta().elapsed); check(`${L}: game-over time matches the frozen clock`, e0 >= 2 && (await p.textContent('#stuck-stats')).includes((await p.textContent('#hud-time')).trim()));
+    const h0 = await p.textContent('#hud-time'); await sleep(1600);
+    check(`${L}: clock stopped`, (await ev(p, () => __PL.meta().elapsed)) === e0 && (await p.textContent('#hud-time')) === h0);
+    await p.keyboard.press('Escape'); await p.mouse.click(5, 5); await sleep(150);
+    check(`${L}: game-over can't be dismissed by Escape or tapping outside`, await visible(p, '#stuck-modal'));
+    await ev(p, () => { const s = __PL.state(); for (const col of s.tab) if (col.cards.length) __PL.smartMove(col.cards[col.cards.length - 1]); });
+    check(`${L}: no move possible while stuck`, (await ev(p, () => __PL.state().moves)) === 1);
+    check(`${L}: streak untouched while the screen is open`, (await ev(p, () => __PL.core.player(__PL.save()).stats.streak)) === before.st.streak);
+    await p.reload(); await p.waitForFunction(() => window.__PL); await sleep(400);
+    check(`${L}: still game over after reload`, await visible(p, '#stuck-modal') && (await ev(p, () => __PL.meta().stuck)) === true);
+    await p.click('#stuck-undo'); await waitIdle(p);
+    check(`${L}: Undo closes the screen and reopens play`, !(await visible(p, '#stuck-modal')) && (await ev(p, () => __PL.state().moves)) === 0 && (await ev(p, () => __PL.meta().stuck)) === false);
+    await sleep(1600);
+    check(`${L}: clock runs again after Undo`, (await ev(p, () => __PL.meta().elapsed)) > e0 + 0.8);
+    check(`${L}: Undo records no loss`, (await ev(p, () => __PL.core.player(__PL.save()).stats.streak)) === before.st.streak);
+    await p.click('#btn-redo'); await p.waitForSelector('#stuck-modal:not([hidden])', { timeout: 4000 }).catch(() => {});
+    check(`${L}: Redo into the dead end → game over again`, await visible(p, '#stuck-modal'));
+    await p.click('#stuck-replay'); await sleep(1300);
+    const rp = await ev(p, () => ({ s: __PL.state(), m: __PL.meta(), st: __PL.core.player(__PL.save()).stats, rows: __PL.save().scores.d1.length + __PL.save().scores.d3.length }));
+    check(`${L}: Replay deals the same deal again`, !(await visible(p, '#stuck-modal')) && rp.s.seed === sc.seed && rp.s.draw === sc.draw && rp.s.moves === 0 && !rp.m.stuck);
+    check(`${L}: leaving records a loss (streak ${before.st.streak} → 0, best streak kept, played +1)`, rp.st.streak === 0 && rp.st.bestStreak === before.st.bestStreak && rp.st.played === before.st.played + 1 && rp.st.won === before.st.won);
+    check(`${L}: game over adds no high score`, rp.rows === before.rows);
+    check(`${L}: replayed deal is playable`, await uiMove(p, inp, { t: 'draw' }) && (await ev(p, () => __PL.state().moves)) === 1);
+    await p.keyboard.press('u'); await waitIdle(p);
+    check(`${L}: replayed deal → dead end again`, await uiMove(p, inp, sc.mv, 'drag') && await p.waitForSelector('#stuck-modal:not([hidden])', { timeout: 4000 }).then(() => true).catch(() => false));
+    await p.click('#stuck-new'); await sleep(1300);
+    const nw = await ev(p, () => ({ s: __PL.state(), m: __PL.meta(), st: __PL.core.player(__PL.save()).stats }));
+    check(`${L}: New game closes the screen with a fresh deal`, !(await visible(p, '#stuck-modal')) && nw.s.moves === 0 && !nw.m.stuck && nw.s.stock.length === 24);
+    check(`${L}: loss counted once per game`, nw.st.played === before.st.played + 2 && nw.st.streak === 0);
+  }
+  await p.click('#btn-help'); const helpTxt = await p.textContent('#help-modal');
+  check(`${T}: How to play explains game over and scoring`, helpTxt.includes('Stuck = game over') && helpTxt.includes('1000 × 240') && helpTxt.includes('Only wins go on the high-score table'));
+  await closeModals(p);
 
   // --- corrupt save ---
   await ev(p, k => { __PL.suspendSave(); localStorage.setItem(k, '{definitely not json'); }, KEY); await p.reload(); await p.waitForFunction(() => window.__PL); await sleep(300);

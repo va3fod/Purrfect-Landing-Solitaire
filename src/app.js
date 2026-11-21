@@ -4,7 +4,7 @@ const C = PLCore, A = PLArt, $ = id => document.getElementById(id);
 const KEY = APP_STORE_KEY;
 const DEV_EMAIL = 'aschiuta@gmail.com';
 let save, hist, meta, faces = [], backUrl = '', L = null, busy = false, cardEls = [], slotEls = {}, lastPos = [];
-let lastMoveAt = 0, drag = null, tapLock = 0, tapAt = null, timerId = 0, hintTimer = 0, stuckShownFor = -1, bannerTimer = 0;
+let lastMoveAt = 0, drag = null, tapLock = 0, tapAt = null, timerId = 0, hintTimer = 0, bannerTimer = 0, stuckTimer = 0;
 
 /* ---------------- persistence ---------------- */
 function loadAll() {
@@ -76,11 +76,12 @@ const Sfx = (() => {
   function spool(dur) { const t = ctx.currentTime, o = ctx.createOscillator(), g = ctx.createGain(); o.type = 'sawtooth'; o.frequency.setValueAtTime(80, t); o.frequency.exponentialRampToValueAtTime(420, t + dur); g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.07, t + dur * 0.5); g.gain.exponentialRampToValueAtTime(0.0001, t + dur); const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 1400; o.connect(f).connect(g).connect(master); o.start(t); o.stop(t + dur + 0.05); whoosh(dur); }
   /* every effect is named per theme; log keeps the last few for tests even when muted */
   const MAP = {
-    cat: { move: 'paw-tap', flip: 'paw-tap', draw: 'paw-tap', found: 'purr', bad: 'hiss', deal: 'meow', win: 'meow+purr', hint: 'meow', theme: 'meow', stamp: 'chirp', auto: 'purr' },
-    air: { move: 'whoosh', flip: 'whoosh', draw: 'whoosh', found: 'atc-chime', bad: 'warning-horn', deal: 'engine-spool', win: 'flyby', hint: 'atc-chime', theme: 'atc-chime', stamp: 'atc-chime', auto: 'atc-chime' }
+    cat: { stuck: 'yawn', move: 'paw-tap', flip: 'paw-tap', draw: 'paw-tap', found: 'purr', bad: 'hiss', deal: 'meow', win: 'meow+purr', hint: 'meow', theme: 'meow', stamp: 'chirp', auto: 'purr' },
+    air: { stuck: 'holding-pattern', move: 'whoosh', flip: 'whoosh', draw: 'whoosh', found: 'atc-chime', bad: 'warning-horn', deal: 'engine-spool', win: 'flyby', hint: 'atc-chime', theme: 'atc-chime', stamp: 'atc-chime', auto: 'atc-chime' }
   };
   const PLAY = {
     'paw-tap': pawTap, purr: () => purr(0.7), hiss, meow: () => meow(1), 'meow+purr': () => { meow(1); meow(1.2, 0.7); purr(2.4); }, chirp: () => { tone('triangle', 900, 1400, 0.09, 0.2); tone('triangle', 1300, 1000, 0.1, 0.16, 0.08); },
+    yawn: () => { meow(0.62); purr(1.0); }, 'holding-pattern': () => { tone('sine', 880, 0, 0.35, 0.2); tone('sine', 659, 0, 0.35, 0.2, 0.3); tone('sine', 523, 0, 0.6, 0.2, 0.6); spool(0.9); },
     whoosh: () => whoosh(), 'atc-chime': () => { atcBeep(); chime(0.25); }, 'warning-horn': horn, 'engine-spool': () => spool(1.1), flyby: () => { engine(3.2); chime(2.2); }
   };
   const log = [];
@@ -90,7 +91,7 @@ const Sfx = (() => {
     if (on) try { PLAY[name](); } catch (e) {}
   }
   const api = { log };
-  for (const ev of ['move', 'flip', 'draw', 'found', 'bad', 'deal', 'win', 'hint', 'theme', 'stamp', 'auto']) api[ev] = () => fx(ev);
+  for (const ev of ['stuck', 'move', 'flip', 'draw', 'found', 'bad', 'deal', 'win', 'hint', 'theme', 'stamp', 'auto']) api[ev] = () => fx(ev);
   api.place = api.move; api.shuffle = api.deal; api.autoStart = api.auto;
   return api;
 })();
@@ -192,7 +193,7 @@ function updateHud() {
   $('hud-mode').textContent = (meta.mode === 'daily' ? 'Daily · ' : '') + 'Draw ' + s.draw + (meta.mode === 'winnable' ? ' · Winnable' : '');
   $('hud-mode').title = 'Deal #' + s.seed;
   $('btn-undo').disabled = !hist.canUndo() || meta.won; $('btn-redo').disabled = !hist.canRedo() || meta.won;
-  $('btn-hint').disabled = meta.won;
+  $('btn-hint').disabled = meta.won || !!meta.stuck;
   const plan = !meta.won && C.faceDownCount(s) === 0 ? C.autoFinishPlan(s) : null;
   $('btn-auto').hidden = !plan;
 }
@@ -210,7 +211,7 @@ function newDeal(o) {
   else if (mode === 'winnable') seed = pickWinnable(draw);
   else seed = (Math.random() * 9000000 + 1000) | 0;
   if (mode === 'daily' && o.daily) daily = o.daily;
-  hist = new C.History(C.newGame(seed, draw)); meta = freshMeta(mode, daily); stuckShownFor = -1;
+  hist = new C.History(C.newGame(seed, draw)); meta = freshMeta(mode, daily); clearTimeout(stuckTimer);
   clearHints(); hideBanner(); closeAllModals();
   // deal animation: start all cards at the stock
   for (let c = 0; c < 52; c++) lastPos[c] = null;
@@ -222,10 +223,12 @@ function newDeal(o) {
   for (let c = 0; c < 52; c++) cardEls[c].style.transition = '';
   render(); Sfx.shuffle();
   setTimeout(() => { for (const el of cardEls) el.style.transitionDelay = ''; }, 1200);
-  persist(); return P;
+  persist();
+  if (C.isStuck(hist.state, { maxNodes: 15000 })) stuckTimer = setTimeout(() => { if (!meta.stuck && !meta.won && C.isStuck(hist.state, { maxNodes: 15000 })) onStuck(); }, 1100);
+  return P;
 }
 function play(mv, why) {
-  if (meta.won || busy) return false;
+  if (meta.won || meta.stuck || busy) return false;
   const before = hist.state, n = hist.play(mv);
   if (!n) { Sfx.bad(); return false; }
   lastMoveAt = performance.now();
@@ -239,10 +242,9 @@ function afterMove() {
   const s = hist.state;
   if (C.isWon(s)) { onWin(); return; }
   persist();
-  if (hist.index !== stuckShownFor && C.isStuck(s)) { stuckShownFor = hist.index; showBanner('No more useful moves.', 'Undo', () => doUndo()); }
-  else if (!C.isStuck(s)) hideBanner();
+  if (C.isStuck(s, { maxNodes: 15000 })) onStuck();
 }
-function doUndo() { if (busy || meta.won || !hist.canUndo()) return; hist.undo(); meta.undos++; clearHints(); hideBanner(); Sfx.place(); render(); persist(); }
+function doUndo() { if (busy || meta.won || !hist.canUndo()) return; if (meta.stuck) C.leaveStuck(save, meta, 'undo'); hist.undo(); meta.undos++; clearHints(); hideBanner(); Sfx.place(); render(); persist(); }
 function doRedo() { if (busy || meta.won || !hist.canRedo()) return; hist.redo(); clearHints(); Sfx.place(); render(); afterMove(); }
 function doDraw() { const s = hist.state; if (!s.stock.length && !s.waste.length) { Sfx.bad(); return; } play({ t: 'draw' }); }
 
@@ -441,6 +443,28 @@ function submitName() {
   if (first && !save.settings.seenHelp) { save.settings.seenHelp = true; persist(); openModal('help-modal'); }
 }
 
+/* ---------------- stuck = game over ---------------- */
+function onStuck() {
+  if (meta.stuck || meta.won) return;
+  C.markStuck(meta); clearHints(); hideBanner(); persist(); Sfx.stuck(); showStuck();
+}
+function showStuck() {
+  const s = hist.state, air = save.settings.theme === 'air';
+  $('stuck-badge').textContent = air ? '🛩️' : '😿';
+  $('stuck-title').textContent = air ? 'Holding pattern — no runway available' : 'Cat nap time — no moves left';
+  $('stuck-sub').textContent = air ? 'Game over: no move can land another card or turn one over, even by cycling the stock.' : 'Game over: the kitty yawns. No move can put another card home or turn one over, even by cycling the stock.';
+  $('stuck-stats').innerHTML = [['Time', fmtTime(meta.elapsed)], ['Moves', s.moves], ['Score', s.score]].map(([k, v]) => `<div><b>${v}</b><span>${k}</span></div>`).join('');
+  $('stuck-undo').disabled = !hist.canUndo();
+  updateHud(); openModal('stuck-modal');
+}
+function leaveStuckTo(action) {
+  const s = hist.state;
+  if (action === 'undo') { closeAllModals(); doUndo(); return; }
+  C.leaveStuck(save, meta, action); persist();
+  if (action === 'replay') newDeal({ seed: s.seed, draw: s.draw, mode: meta.mode, daily: meta.daily });
+  else newDeal({});
+}
+
 /* ---------------- celebrations ---------------- */
 function celebrate(done) {
   const cv = $('fx'), ctx = cv.getContext('2d'), dpr = Math.min(2, window.devicePixelRatio || 1);
@@ -543,7 +567,7 @@ function startTimer() {
   clearInterval(timerId); let lastT = performance.now();
   timerId = setInterval(() => {
     const now = performance.now(), dt = (now - lastT) / 1000; lastT = now;
-    if (meta.counted && !meta.won && !document.hidden && dt < 5) { meta.elapsed += dt; $('hud-time').textContent = fmtTime(meta.elapsed); if (Math.floor(meta.elapsed) % 10 === 0) persist(); }
+    if (!document.hidden && C.tickTimer(meta, dt) && meta.counted && !meta.won && !meta.stuck) { $('hud-time').textContent = fmtTime(meta.elapsed); if (Math.floor(meta.elapsed) % 10 === 0) persist(); }
   }, 500);
 }
 
@@ -560,7 +584,7 @@ function copyDevEmail() {
 function init() {
   const wasCorrupt = loadAll();
   initBoard(); buildArt(); computeLayout();
-  if (save.game) { hist = new C.History(null, save.game.list, save.game.index); meta = Object.assign(freshMeta('random'), save.game); delete meta.list; delete meta.index; render({ instant: true }); if (meta.won) $('hud-score').textContent = meta.final || hist.state.score; }
+  if (save.game) { hist = new C.History(null, save.game.list, save.game.index); meta = Object.assign(freshMeta('random'), save.game); delete meta.list; delete meta.index; render({ instant: true }); if (meta.won) $('hud-score').textContent = meta.final || hist.state.score; if (meta.stuck) setTimeout(showStuck, 50); }
   else { meta = null; newDeal({}); }
   updatePlayerUI();
   if (!C.player(save)) askName('first');
@@ -581,7 +605,8 @@ function init() {
   const syncSound = () => { $('btn-sound').textContent = save.settings.sound ? '🔊' : '🔇'; $('btn-sound').setAttribute('aria-pressed', save.settings.sound); };
   $('btn-sound').onclick = () => { save.settings.sound = !save.settings.sound; syncSound(); persist(); if (save.settings.sound) Sfx.place(); toast(save.settings.sound ? 'Sound on' : 'Sound off'); };
   syncSound();
-  document.querySelectorAll('.modal').forEach(m => { m.addEventListener('click', e => { if (e.target === m || e.target.closest('.close')) closeAllModals(); }); });
+  document.querySelectorAll('.modal').forEach(m => { m.addEventListener('click', e => { if (m.id === 'stuck-modal') return; if (e.target === m || e.target.closest('.close')) closeAllModals(); }); });
+  $('stuck-undo').onclick = () => leaveStuckTo('undo'); $('stuck-replay').onclick = () => leaveStuckTo('replay'); $('stuck-new').onclick = () => leaveStuckTo('new');
   document.querySelectorAll('[data-open]').forEach(bt => bt.onclick = () => openModal(bt.dataset.open));
   $('menu-daily').onclick = () => newDeal({ mode: 'daily' });
   document.querySelectorAll('#new-modal [data-draw]').forEach(bt => bt.onclick = () => { save.settings.draw = +bt.dataset.draw; syncNewUI(); persist(); });
@@ -609,7 +634,7 @@ function init() {
   $('win-new').onclick = () => newDeal({});
   $('about-copy').onclick = copyDevEmail;
   document.addEventListener('keydown', e => {
-    if (e.key === 'Escape') { if (closeAllModals()) e.preventDefault(); return; }
+    if (e.key === 'Escape') { if (!$('stuck-modal').hidden) return; if (closeAllModals()) e.preventDefault(); return; }
     if (anyModal() || e.altKey || e.metaKey) return;
     if (e.target && /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
     const k = e.key.toLowerCase(), ctrl = e.ctrlKey;

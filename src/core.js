@@ -245,14 +245,65 @@
     if (talonReach(s).some(t => t.draws > 0)) return { move: { t: 'draw' }, source: 'heuristic' };
     return null;
   }
-  /* true when nothing productive is left (only cycling the stock, no playable card anywhere) */
-  function isStuck(s) {
-    if (isWon(s)) return false;
-    const mv = listMoves(s).filter(m => m.t !== 'draw' && !(m.from.t === 'f'));
-    const useful = mv.filter(m => !(m.from.t === 't' && m.to.t === 't' && s.tab[m.from.i].down === s.tab[m.from.i].cards.length - m.n && s.tab[m.from.i].down === 0 && !s.tab[m.to.i].cards.length));
-    if (useful.length) return false;
-    for (const r of talonReach(s)) { const c = top(r.waste); if (canFound(s, c)) return false; for (let j = 0; j < 7; j++) if (canTab(s, c, j)) return false; }
+  /* ---------- stuck / game over ----------
+     A position is STUCK when no sequence of legal moves (table moves, waste moves, draws and stock
+     recycling, even cards taken back down from the foundations) can ever reach a position with more
+     cards on the foundations or fewer face-down cards. Then the game can never be won, so this has
+     no false positives. The search explores every reachable position (breadth-first, duplicates
+     merged); if it runs past its budget we answer "not stuck" to stay safe. */
+  const foundCount = s => s.found[0].length + s.found[1].length + s.found[2].length + s.found[3].length;
+  /* cheap sufficient checks for "a way out exists" (each one is a real 1–2 move path to progress) */
+  function quickProgress(s) {
+    const bottoms = [];                                   // first face-up card of columns that still hide cards
+    for (let i = 0; i < 7; i++) { const col = s.tab[i]; if (col.down > 0 && col.cards.length > col.down) bottoms.push([i, col.cards[col.down]]); }
+    for (let i = 0; i < 7; i++) {
+      const col = s.tab[i], L = col.cards.length; if (L === col.down) continue;
+      if (canFound(s, col.cards[L - 1])) return true;                                   // straight to foundation
+      for (let k = col.down; k < L; k++) {
+        const c = col.cards[k];
+        for (let j = 0; j < 7; j++) {
+          if (j === i || !canTab(s, c, j)) continue;
+          if (k === col.down && col.down > 0) return true;                               // move uncovers a card
+          if (k > col.down && canFound(s, col.cards[k - 1])) return true;                // move frees a foundation card
+        }
+      }
+    }
+    for (const r of talonReach(s)) {
+      const c = top(r.waste); if (canFound(s, c)) return true;
+      for (let j = 0; j < 7; j++) {
+        if (!canTab(s, c, j)) continue;                                                  // waste card lands on column j…
+        for (const [i, b] of bottoms) if (i !== j && isRed(b) !== isRed(c) && rankOf(c) === rankOf(b) + 1) return true; // …and a hiding run can follow
+      }
+    }
+    return false;
+  }
+  function isStuck(s0, opts) {
+    if (isWon(s0)) return false;
+    if (quickProgress(s0)) return false;
+    const budget = (opts && opts.maxNodes) || 30000, f0 = foundCount(s0), d0 = faceDownCount(s0);
+    const seen = new Set([stateKey(s0)]), stack = [s0];
+    while (stack.length) {
+      if (seen.size > budget) return false;                 // too big to prove: assume a way out exists
+      const s = stack.pop();
+      if (s !== s0 && quickProgress(s)) return false;
+      for (const m of listMoves(s)) {
+        const n = apply(s, m);
+        if (foundCount(n) > f0 || faceDownCount(n) < d0) return false;
+        const k = stateKey(n); if (seen.has(k)) continue; seen.add(k); stack.push(n);
+      }
+    }
     return true;
+  }
+  /* game-session helpers shared by the UI and the tests */
+  function tickTimer(meta, dt) { if (meta.counted && !meta.won && !meta.stuck && dt > 0 && dt < 5) meta.elapsed += dt; return meta.elapsed; }
+  function markStuck(meta) { meta.stuck = true; return meta; }
+  /* action: 'undo' | 'new' | 'replay'. Undo reopens play with no stats change; leaving records a loss once. */
+  function leaveStuck(save, meta, action) {
+    meta.stuck = false;
+    if (action === 'undo') return { resume: true, lossRecorded: false };
+    let lossRecorded = false;
+    if (meta.counted && !meta.won && !meta.lost) { recordLoss(save, meta.pid); meta.lost = true; lossRecorded = true; }
+    return { resume: false, lossRecorded };
   }
 
   /* ---------- history (unlimited undo/redo) ---------- */
@@ -283,7 +334,7 @@
   }
   const DEFAULT_SETTINGS = { theme: 'cat', draw: 1, winnable: true, sound: true, leftHanded: false, large: false, colorblind: false, seenHelp: false };
   function defaultStats() { return { played: 0, won: 0, streak: 0, bestStreak: 0, bestTime: null, fewestMoves: null, bestScore: 0, wonDraw1: 0, wonDraw3: 0, dailyDone: [] }; }
-  function defaultSave() { return { v: 2, settings: Object.assign({}, DEFAULT_SETTINGS), players: {}, current: null, scores: { d1: [], d3: [] }, game: null }; }
+  function defaultSave() { return { v: 2, scoring: 2, settings: Object.assign({}, DEFAULT_SETTINGS), players: {}, current: null, scores: { d1: [], d3: [] }, game: null }; }
   const num = (v, d, min, max) => (Number.isFinite(v) && v >= (min == null ? -Infinity : min) && v <= (max == null ? Infinity : max) ? v : d);
   const MAX_PLAYERS = 12, MAX_SCORES = 10;
   function cleanName(n) { if (typeof n !== 'string') return ''; return n.replace(/[\u0000-\u001f\u007f<>&"]/g, '').replace(/\s+/g, ' ').trim().slice(0, 20); }
@@ -323,7 +374,11 @@
     if (g && typeof g === 'object' && Array.isArray(g.list) && g.list.length && g.list.every(validState) && Number.isInteger(g.index) && g.index >= 0 && g.index < g.list.length) {
       out.game = { list: g.list, index: g.index, mode: ['random', 'winnable', 'daily'].includes(g.mode) ? g.mode : 'random', daily: typeof g.daily === 'string' ? g.daily : null,
         elapsed: num(g.elapsed, 0, 0, 1e8), undos: Math.floor(num(g.undos, 0, 0, 1e9)), hints: Math.floor(num(g.hints, 0, 0, 1e9)), counted: !!g.counted, won: !!g.won,
-        pid: typeof g.pid === 'string' && out.players[g.pid] ? g.pid : null, final: num(g.final, 0, 0) };
+        pid: typeof g.pid === 'string' && out.players[g.pid] ? g.pid : null, final: num(g.final, 0, 0), stuck: !!g.stuck, lost: !!g.lost };
+    }
+    if (raw.scoring !== 2) {                                    // V1.0 saves: re-score with the capped time bonus
+      for (const k of ['d1', 'd3']) { for (const e of out.scores[k]) e.score = Math.max(0, e.score - oldTimeBonus(e.time)) + timeBonus(e.time); out.scores[k].sort(scoreOrder); }
+      for (const id of Object.keys(out.players)) { const mine = [...out.scores.d1, ...out.scores.d3].filter(e => e.pid === id).map(e => e.score); out.players[id].stats.bestScore = mine.length ? Math.max(...mine) : 0; }
     }
     return out;
   }
@@ -394,7 +449,10 @@
   }
   function recordStart(save, pid) { ensurePlayer(save).stats; player(save, pid).stats.played++; }
   function recordLoss(save, pid) { const p = player(save, pid); if (p) p.stats.streak = 0; }
-  function timeBonus(sec) { return sec >= 30 ? Math.round(700000 / sec) : 0; }
+  /* time bonus: up to 1000 points, halving at 4 minutes: 1000 × 240 ÷ (seconds + 240) */
+  const BONUS_MAX = 1000, BONUS_HALF = 240;
+  function timeBonus(sec) { sec = Math.max(0, sec || 0); return Math.round(BONUS_MAX * BONUS_HALF / (sec + BONUS_HALF)); }
+  function oldTimeBonus(sec) { return sec >= 30 ? Math.round(700000 / sec) : 0; }
 
   /* ---------- daily / winnable seeds ---------- */
   function dateKey(d) { const p = n => String(n).padStart(2, '0'); return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()); }
@@ -402,6 +460,6 @@
   function dailySeed(key, list) { const h = hashStr('purrfect-' + key); return list && list.length ? list[h % list.length] : h; }
 
   return { SUITS, RANKS, suitOf, rankOf, isRed, cardName, rng, shuffledDeck, newGame, clone, SCORE, canFound, canTab, picked, legal, apply, isWon, faceDownCount,
-    listMoves, autoFinishPlan, talonReach, stateKey, solve, replay, hint, isStuck, History, validState, DEFAULT_SETTINGS, defaultStats, defaultSave, sanitize, loadSave,
+    listMoves, autoFinishPlan, talonReach, stateKey, solve, replay, hint, isStuck, quickProgress, tickTimer, markStuck, leaveStuck, BONUS_MAX, BONUS_HALF, oldTimeBonus, History, validState, DEFAULT_SETTINGS, defaultStats, defaultSave, sanitize, loadSave,
     STAMPS, recordWin, recordStart, recordLoss, cleanName, addPlayer, renamePlayer, switchPlayer, removePlayer, player, ensurePlayer, addScore, resetScores, resetPlayerStats, MAX_PLAYERS, MAX_SCORES, timeBonus, dateKey, hashStr, dailySeed };
 });
