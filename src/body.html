@@ -1,0 +1,242 @@
+<!-- Shown only in WhatsApp / in-app / preview (JS decides). Visible by default if JS never runs. -->
+<div id="browser-tip" role="note">
+  <button type="button" id="browser-tip-close" aria-label="Hide this tip">✕</button>
+  <strong>📱 Open in your browser</strong>
+  <span id="browser-tip-body">WhatsApp, Drive, and some apps open a preview that may not run the game or save your stats. Open this page in your real browser (Safari or Chrome).</span>
+  <ol id="browser-tip-steps">
+    <li><b>iPhone / iPad:</b> tap Share (□↑) → <b>Open in Safari</b>.</li>
+    <li><b>Android:</b> tap ⋮ → <b>Open in Chrome</b> (or Open in browser).</li>
+  </ol>
+</div>
+<script>
+(function () {
+  function needsTip() {
+    try {
+      var ua = navigator.userAgent || '';
+      if (/WhatsApp|FBAN|FBAV|Facebook|Instagram|Line\/|Twitter|LinkedInApp|Snapchat|Pinterest|TikTok|ByteLocale|BytedanceWebview|Messenger/i.test(ua)) return true;
+      if (/; wv\)|\bwv\b/i.test(ua)) return true;
+      try { if (window.top !== window.self) return true; } catch (e) { return true; }
+      var apple = /iPhone|iPad|iPod/i.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+      if (apple && /AppleWebKit/i.test(ua) && !/Safari/i.test(ua) && !/CriOS|FxiOS|EdgiOS/i.test(ua)) return true;
+      return false;
+    } catch (e) { return true; }
+  }
+  var el = document.getElementById('browser-tip');
+  if (!el) return;
+  if (!needsTip()) { el.classList.add('hidden'); return; }
+  var ua = navigator.userAgent || '', steps = document.getElementById('browser-tip-steps');
+  var apple = /iPhone|iPad|iPod/i.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  if (steps && apple) steps.innerHTML = '<li>Tap <b>Share</b> (□↑).</li><li>Choose <b>Open in Safari</b>.</li>';
+  else if (steps && /Android/i.test(ua)) steps.innerHTML = '<li>Tap the <b>⋮</b> menu (three dots).</li><li>Choose <b>Open in Chrome</b> or <b>Open in browser</b>.</li>';
+  document.getElementById('browser-tip-close').onclick = function () { el.classList.add('hidden'); };
+})();
+</script>
+<div id="app" class="theme-cat">
+  <header id="topbar">
+    <div class="brand" title="__APP_NAME__">
+      <span class="logo" aria-hidden="true"></span>
+      <span class="brand-text"><span class="brand-name">Purrfect Landing</span><a class="brand-sub" id="brand-hub" href="https://va3fod.github.io/" title="More apps by Val">Val’s Apps · Solitaire</a></span>
+    </div>
+    <div class="hud" aria-live="off">
+      <button type="button" id="hud-player" class="chip chip-btn" title="Player — tap to switch">👤 <span id="hud-player-name">Player</span></button>
+      <span id="hud-mode" class="chip">Draw 1</span>
+      <span class="hud-item" title="Time">⏱ <b id="hud-time">0:00</b></span>
+      <span class="hud-item" title="Moves">↔ <b id="hud-moves">0</b></span>
+      <span class="hud-item" title="Score">★ <b id="hud-score">0</b></span>
+    </div>
+    <div class="top-actions">
+      <button type="button" id="btn-theme" class="icon-btn" aria-label="Switch theme" title="Switch theme (T)"></button>
+      <button type="button" id="btn-sound" class="icon-btn" aria-label="Sound on/off" title="Sound (M)">🔊</button>
+      <button type="button" id="btn-help" class="icon-btn" aria-label="How to play" title="How to play (?)">?</button>
+      <button type="button" id="btn-about" class="icon-btn small" aria-label="About" title="About">ℹ</button>
+      <button type="button" id="btn-menu" class="icon-btn" aria-label="Menu" title="Menu">☰</button>
+    </div>
+  </header>
+  <main id="board" aria-label="Solitaire table"><div id="stock-count" aria-hidden="true"></div><div id="banner" role="status" aria-live="polite"></div></main>
+  <nav id="toolbar" aria-label="Game controls">
+    <button type="button" id="btn-new" title="New deal (N)"><span class="i">🂠</span><span class="t">New</span></button>
+    <button type="button" id="btn-undo" title="Undo (U)"><span class="i">↶</span><span class="t">Undo</span></button>
+    <button type="button" id="btn-redo" title="Redo (R)"><span class="i">↷</span><span class="t">Redo</span></button>
+    <button type="button" id="btn-hint" title="Hint (H)"><span class="i">💡</span><span class="t">Hint</span></button>
+    <button type="button" id="btn-auto" title="Auto-finish (A)" hidden><span class="i" id="auto-i">🐾</span><span class="t" id="auto-t">Finish</span></button>
+    <button type="button" id="btn-stats" title="Stats &amp; stamps"><span class="i">🏅</span><span class="t">Stats</span></button>
+  </nav>
+  <footer class="app-credit">Made by Val, VA3FOD · <a id="foot-hub" href="https://va3fod.github.io/">Val’s Apps</a> · <button type="button" id="btn-about-foot" class="linkish">About</button></footer>
+</div>
+<div id="toast" role="status" aria-live="polite"></div>
+<canvas id="fx" aria-hidden="true"></canvas>
+
+<div id="menu-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="menu-title" hidden>
+  <div class="modal-content">
+    <h3 id="menu-title">Menu</h3>
+    <div class="menu-grid">
+      <button type="button" data-open="new-modal">🂠 New deal</button>
+      <button type="button" id="menu-daily">📅 Daily challenge</button>
+      <button type="button" data-open="settings-modal">⚙️ Settings</button>
+      <button type="button" data-open="stats-modal">🏆 Stats &amp; high scores</button>
+      <button type="button" data-open="players-modal">👥 Players</button>
+      <button type="button" data-open="help-modal">❓ How to play</button>
+      <button type="button" data-open="about-modal">ℹ️ About</button>
+    </div>
+    <button type="button" class="close gray">Close</button>
+  </div>
+</div>
+
+<div id="new-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="new-title" hidden>
+  <div class="modal-content">
+    <h3 id="new-title">New deal</h3>
+    <div class="seg" role="radiogroup" aria-label="Draw mode">
+      <button type="button" role="radio" data-draw="1" id="nd-draw1">Draw 1 <small>relaxed</small></button>
+      <button type="button" role="radio" data-draw="3" id="nd-draw3">Draw 3 <small>classic challenge</small></button>
+    </div>
+    <label class="toggle"><input type="checkbox" id="nd-winnable"> <span><b>Winnable deals only</b><small>Every deal is checked by the solver first, so a win is always possible.</small></span></label>
+    <p id="nd-forfeit" class="note" hidden>Your current game will count as a loss.</p>
+    <div class="btn-row">
+      <button type="button" id="nd-deal" class="primary">Deal ▶</button>
+      <button type="button" id="nd-daily">📅 Daily challenge</button>
+    </div>
+    <button type="button" class="close gray">Cancel</button>
+  </div>
+</div>
+
+<div id="settings-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="settings-title" hidden>
+  <div class="modal-content">
+    <h3 id="settings-title">Settings</h3>
+    <div class="seg" role="radiogroup" aria-label="Theme">
+      <button type="button" role="radio" data-theme="cat" id="set-theme-cat">🐱 Cats</button>
+      <button type="button" role="radio" data-theme="air" id="set-theme-air">✈️ Aviation</button>
+    </div>
+    <div class="set-player"><span>👤 Player: <b id="set-player-name">Player</b></span><button type="button" id="set-player-btn">Change / switch</button></div>
+    <label class="toggle"><input type="checkbox" id="set-sound"> <span><b>Sound effects</b><small id="set-sound-sub">Meows and purrs</small></span></label>
+    <label class="toggle"><input type="checkbox" id="set-left"> <span><b>Left-handed layout</b><small>Stock on the right, foundations on the left.</small></span></label>
+    <label class="toggle"><input type="checkbox" id="set-large"> <span><b>Large cards</b><small>Bigger corner numbers and suits, easier to read.</small></span></label>
+    <label class="toggle"><input type="checkbox" id="set-cb"> <span><b>Colour-blind friendly suits</b><small>Four colours: ♠ black, ♣ blue, ♥ vermilion, ♦ amber.</small></span></label>
+    <label class="toggle"><input type="checkbox" id="set-winnable"> <span><b>Winnable deals only</b><small>Applies to your next deal.</small></span></label>
+    <button type="button" class="close gray">Done</button>
+  </div>
+</div>
+
+<div id="stats-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="stats-title" hidden>
+  <div class="modal-content wide">
+    <h3 id="stats-title">Stats &amp; high scores</h3>
+    <div class="tabs" role="tablist">
+      <button type="button" role="tab" data-tab="mine" id="tab-mine">My stats</button>
+      <button type="button" role="tab" data-tab="scores" id="tab-scores">🏆 High scores</button>
+      <button type="button" role="tab" data-tab="players" id="tab-players">👥 Players</button>
+    </div>
+    <section id="panel-mine" class="panel">
+      <p class="who">Player: <b id="stats-player">Player</b></p>
+      <div id="stats-grid" class="stats-grid"></div>
+      <h4 id="stamps-title">Stamps</h4>
+      <div id="stamps" class="stamps"></div>
+      <div class="reset-wrap">
+        <button type="button" id="stats-reset" class="linkish">Reset my stats</button>
+        <div id="stats-reset-confirm" hidden><b>Clear your stats and stamps on this device?</b><br><button type="button" id="stats-reset-yes" class="red">Yes, clear</button> <button type="button" id="stats-reset-no" class="gray">Keep</button></div>
+      </div>
+    </section>
+    <section id="panel-scores" class="panel" hidden>
+      <div class="seg small-seg" role="radiogroup" aria-label="Mode">
+        <button type="button" role="radio" data-lb="1" id="lb-d1">Draw 1</button>
+        <button type="button" role="radio" data-lb="3" id="lb-d3">Draw 3</button>
+      </div>
+      <div class="table-wrap"><table class="lb"><thead><tr><th>#</th><th>Player</th><th>Score</th><th>Time</th><th>Moves</th><th>Date</th></tr></thead><tbody id="lb-body"></tbody></table></div>
+      <p id="lb-empty" class="small" hidden>No wins yet in this mode. Win a game to get on the board!</p>
+      <div class="reset-wrap">
+        <button type="button" id="lb-reset" class="linkish">Reset high scores</button>
+        <div id="lb-reset-confirm" hidden><b>Clear the high-score table for everyone on this device?</b><br><button type="button" id="lb-reset-yes" class="red">Yes, clear</button> <button type="button" id="lb-reset-no" class="gray">Keep</button></div>
+      </div>
+    </section>
+    <section id="panel-players" class="panel" hidden>
+      <div class="table-wrap"><table class="lb"><thead><tr><th>Player</th><th>Games</th><th>Wins</th><th>Win %</th><th>Streak</th><th>Best streak</th><th>Best time</th></tr></thead><tbody id="pl-body"></tbody></table></div>
+      <button type="button" id="stats-switch" class="mt">👤 Switch or add player</button>
+    </section>
+    <button type="button" class="close gray">Close</button>
+  </div>
+</div>
+
+<div id="players-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="players-title" hidden>
+  <div class="modal-content">
+    <h3 id="players-title">Players</h3>
+    <div id="players-list" class="players-list"></div>
+    <div class="btn-row">
+      <button type="button" id="pl-rename">✏️ Change my name</button>
+      <button type="button" id="pl-add" class="primary">＋ Add player</button>
+    </div>
+    <button type="button" class="close gray">Close</button>
+  </div>
+</div>
+
+<div id="name-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="name-title" hidden>
+  <div class="modal-content">
+    <h3 id="name-title">Who’s playing?</h3>
+    <p id="name-sub" class="small">Your name goes on the high-score table. It stays on this device.</p>
+    <input id="name-input" type="text" maxlength="20" autocomplete="off" placeholder="Your name" aria-label="Player name">
+    <p id="name-error" class="note" hidden></p>
+    <div class="btn-row"><button type="button" id="name-ok" class="primary">Let’s play ▶</button></div>
+    <button type="button" id="name-cancel" class="close gray">Cancel</button>
+  </div>
+</div>
+
+<div id="help-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="help-title" hidden>
+  <div class="modal-content help">
+    <h3 id="help-title">How to play __APP_NAME__</h3>
+    <p><b>Goal:</b> move all 52 cards up to the four foundations, Ace to King, one suit per pile.</p>
+    <ul>
+      <li>On the table, stack cards <b>down in alternating colours</b> (red 7 on black 8). You can move a whole face-up run at once.</li>
+      <li>Only a <b>King</b> (or a run starting with a King) can go into an empty column.</li>
+      <li>Tap the <b>stock</b> to turn 1 or 3 cards. When it runs out, tap it again to recycle the waste.</li>
+      <li>Face-down cards flip over when they are uncovered.</li>
+    </ul>
+    <h4>Controls</h4>
+    <ul>
+      <li><b>Tap or click</b> a card to send it to the best spot (foundation first). <b>Drag</b> it if you want a different spot. Double-click works too.</li>
+      <li>Keys: <kbd>U</kbd> undo, <kbd>R</kbd> redo, <kbd>H</kbd> hint, <kbd>N</kbd> new deal, <kbd>Space</kbd> draw, <kbd>A</kbd> auto-finish, <kbd>T</kbd> theme, <kbd>M</kbd> sound.</li>
+    </ul>
+    <h4>Sounds</h4>
+    <ul>
+      <li><b>Cats:</b> a meow when you deal and win, a purr on the foundation, paw taps as cards move, and a hiss for a move that isn’t allowed.</li>
+      <li><b>Aviation:</b> engine spool-up on the deal, a radio chime on the foundation, a whoosh as cards move, a warning horn for a move that isn’t allowed, and a flyby when you win.</li>
+      <li>Tap 🔊 to mute. Sounds switch with the theme.</li>
+    </ul>
+    <h4>Extras</h4>
+    <ul>
+      <li><b>Unlimited undo and redo</b>, and a <b>smart hint</b> that looks ahead with a solver.</li>
+      <li><b>Winnable deals</b>: with this on, every deal has been solved by the computer first.</li>
+      <li><b>Daily challenge</b>: everyone gets the same winnable deal each day.</li>
+      <li><b>Auto-finish</b> appears once every card is face up and the rest is easy.</li>
+      <li><b>Stamps</b> to collect, like Cat Nap or Barrel Roll, plus stats and streaks.</li>
+      <li><b>Players and high scores</b>: each player on this device has their own stats. The top 10 scores for Draw 1 and Draw 3 are kept with name, time, moves and date. Tap 👤 to switch players.</li>
+      <li>Switch between the <b>Cat</b> and <b>Aviation</b> themes anytime. Left-handed, large-card and colour-blind options are in Settings.</li>
+    </ul>
+    <p class="small">Scoring: +10 to a foundation, +5 from the waste to the table, +5 for flipping a card, −15 from a foundation back to the table, and a time bonus when you win.</p>
+    <button type="button" class="close gray">Got it</button>
+  </div>
+</div>
+
+<div id="about-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="about-title" hidden>
+  <div class="modal-content">
+    <h3 id="about-title">__APP_NAME__</h3>
+    <p class="about-ver" id="about-version">Version __VERSION__</p>
+    <p class="about-lead">A free Klondike solitaire with two themes, cats and aviation. It works offline, has no ads and no sign-up, and your games and stats are saved only on this device.</p>
+    <p class="about-made">Made by Val, VA3FOD</p>
+    <p class="about-hub">Part of <a id="about-hub" href="https://va3fod.github.io/">Val’s Apps</a>, free games and tools at va3fod.github.io</p>
+    <div class="about-support">
+      <h4>Support the developer</h4>
+      <p>If you enjoy it, you can send a tip by Interac e-Transfer to aschiuta@gmail.com</p>
+      <div class="about-email-row"><code class="about-email">aschiuta@gmail.com</code><button type="button" id="about-copy">Copy email</button></div>
+      <p class="about-note">Tips are optional — the game stays free.</p>
+    </div>
+    <button type="button" class="close gray">Close</button>
+  </div>
+</div>
+
+<div id="win-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="win-title" hidden>
+  <div class="modal-content win">
+    <div id="win-badge" aria-hidden="true"></div>
+    <h3 id="win-title">You won!</h3>
+    <div id="win-stats" class="stats-grid"></div>
+    <p id="win-rank" class="win-rank" hidden></p>
+    <div id="win-stamps"></div>
+    <div class="btn-row"><button type="button" id="win-new" class="primary">New deal ▶</button><button type="button" class="close gray">Admire the table</button></div>
+  </div>
+</div>
